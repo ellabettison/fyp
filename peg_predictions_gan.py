@@ -1,5 +1,6 @@
 import datetime
 
+import keras.losses
 import numpy as np
 from tensorflow.keras.layers import Input, UpSampling1D, ReLU, Conv2D, BatchNormalization, LeakyReLU, Conv2DTranspose, \
     AvgPool2D, \
@@ -15,9 +16,8 @@ from data_loader import DataLoader
 import os
 import matplotlib.pyplot as plt
 
-from keras import backend as K
+from tensorflow.keras import backend as K
 sess = compat.v1.Session(config=compat.v1.ConfigProto(log_device_placement=True))
-K._get_available_gpus()
 
 
 class RCAN:
@@ -28,7 +28,7 @@ class RCAN:
         self.kernel_size = 3
         self.filters = 32
         # self.img_shape = (472, 472, 3) # from paper
-        self.img_size = 512  # power of 2 so it acc works :/
+        self.img_size = 128 #512  # power of 2 so it acc works :/
         self.output_size = 58
         self.input_shape = (self.img_size, self.img_size, 3)
         self.rgb_shape = (self.output_size, self.output_size, 3)
@@ -36,7 +36,8 @@ class RCAN:
         self.depth_shape = (self.output_size, self.output_size, 1)
         self.batch_size = 4 # FIND BATCH SIZE??
         # self.patch_sizes = [472, 236, 118]
-        self.patch_sizes = [512, 256, 128]
+        # self.patch_sizes = [512, 256, 128]
+        self.patch_sizes=[128, 64, 32]
         self.patch_weights = [1, 1, 1]
         self.epochs = 20 # ??
         self.lr = None
@@ -93,9 +94,9 @@ class RCAN:
         d4 = self.conv2d_layer(d3, self.filters * 8)
         d5 = self.conv2d_layer(d4, self.filters * 16)
         d6 = self.conv2d_layer(d5, self.filters * 32)
-        d7 = self.conv2d_layer(d6, self.filters * 32)
+        # d7 = self.conv2d_layer(d6, self.filters * 32)
 
-        d8 = self.conv2d_layer(d7, self.filters * 32)
+        d8 = self.conv2d_layer(d6, self.filters * 32)
         b0 = AvgPool2D(pool_size=(2, 2))(d8)  # CHECK ME!!
         b1 = UpSampling2D(size=(2, 2), interpolation='bilinear')(b0)
         b2 = Conv2D(filters=self.filters * 32, kernel_size=self.kernel_size, padding='same', activation='relu')(b1)
@@ -103,8 +104,8 @@ class RCAN:
         u1 = UpSampling2D(size=(2, 2), interpolation='bilinear')(b3)
         # u1 = self.deconv2d_layer(b1, filters1=self.filters * 32, use_skip_input=False)
 
-        u2 = self.deconv2d_layer(u1, skip_input=d7, filters1=self.filters * 64, filters2=self.filters * 32)
-        u3 = self.deconv2d_layer(u2, skip_input=d6, filters1=self.filters * 64, filters2=self.filters * 16)
+        # u2 = self.deconv2d_layer(u1, skip_input=d7, filters1=self.filters * 64, filters2=self.filters * 32)
+        u3 = self.deconv2d_layer(u1, skip_input=d6, filters1=self.filters * 64, filters2=self.filters * 16)
         u4 = self.deconv2d_layer(u3, skip_input=d5, filters1=self.filters * 32, filters2=self.filters * 8)
         u5 = self.deconv2d_layer(u4, skip_input=d4, filters1=self.filters * 16, filters2=self.filters * 4)
         u6 = self.deconv2d_layer(u5, skip_input=d3, filters1=self.filters * 8, filters2=self.filters * 2)
@@ -186,13 +187,15 @@ class RCAN:
         # depth equality between dc and da
         # use MPSE with l2 for semantic and depth auxiliary losses
         # plus sigmoid cross-entropy gan loss
-        gan.compile(loss=['binary_crossentropy', 'mse'], loss_weights=[1, 100], optimizer=self.opt_G)
+        gan.compile(loss=['binary_crossentropy','mse'], loss_weights=[1, 100], optimizer=self.opt_G)
         return gan
 
     def train(self):
         start_time = datetime.datetime.now()
 
-        valid_patch_outputs = [np.ones((self.batch_size,) + (disc_patch, disc_patch, 1)) for disc_patch in
+        # valid_patch_outputs = [np.ones((self.batch_size,) + (disc_patch, disc_patch, 1)) for disc_patch in
+        #                        self.patch_sizes]
+        valid_patch_outputs = [np.full((self.batch_size,) + (disc_patch, disc_patch, 1), 0.9) for disc_patch in
                                self.patch_sizes]
         fake_patch_outputs = [np.zeros((self.batch_size,) + (disc_patch, disc_patch, 1)) for disc_patch in
                               self.patch_sizes]
@@ -251,7 +254,7 @@ class RCAN:
 
         gen_imgs = np.concatenate([imgs_B, fake_A, imgs_A])
 
-        print(fake_A)
+        # print(fake_A)
 
         # Rescale images 0 - 1
         gen_imgs = 0.5 * gen_imgs + 0.5

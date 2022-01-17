@@ -1,16 +1,21 @@
 import random
 from glob import glob
 import numpy as np
+from skimage import transform
 from PIL import Image
+import tensorflow as tf
 
 
 class DataLoader:
-    def __init__(self, dataset_name, img_res=(512, 512)):
+    def __init__(self, dataset_name, img_res=(128, 128), data_to_use=None):
         self.dataset_name = dataset_name
         self.img_res = img_res
         # self.dataset_size = 29961
         self.dataset_size = 1000
         self.randomisations = 5
+        self.data_to_use = data_to_use
+        if self.data_to_use:
+            self.data_file = np.load("datasets/%s/reference_env/0/%s" % (self.dataset_name, self.data_to_use))
 
         # Convert to Lab colourspace
         # srgb_p = ImageCms.createProfile("sRGB")
@@ -112,3 +117,26 @@ class DataLoader:
         # return np.array(color.rgb2lab(Image.open(path).convert('RGB')))
         # return imageio.imread(path, as_gray=False, pilmode="RGB").astype(np.float)
         # return color.rgb2lab(io.imread(path, pilmode='RGB'))
+
+    def load_batch_with_data(self, batch_size):
+        self.n_batches = int(self.dataset_size / batch_size)
+
+        for i in range(self.n_batches - 1):
+            img_nums = np.random.randint(self.dataset_size, size=batch_size)
+
+            imgs_A = []
+            imgs_B = []
+            for img_num in img_nums:
+                img_path_target = glob(
+                    'datasets/%s/reference_env/0/RGB/11%s.png' % (self.dataset_name, img_num))
+                img_target = self.imread(img_path_target[0])
+
+                img_target = np.array(Image.fromarray(img_target).resize((128,72)))
+
+                imgs_A.append(img_target)
+                img_B = self.data_file[img_num]
+                imgs_B.append([img_B[0], (img_B[1])])
+
+            imgs_A = np.array(imgs_A) / 127.5 - 1.
+
+            yield imgs_A, tf.convert_to_tensor((imgs_B), dtype=tf.float32)
