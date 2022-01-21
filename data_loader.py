@@ -16,7 +16,7 @@ class DataLoader:
         self.data_to_use = data_to_use
         if self.data_to_use:
             self.data_file = np.load("datasets/%s/reference_env/0/%s" % (self.dataset_name, self.data_to_use))
-
+            print(np.max(self.data_file[:,1]))
         # Convert to Lab colourspace
         # srgb_p = ImageCms.createProfile("sRGB")
         # lab_p = ImageCms.createProfile("LAB")
@@ -125,7 +125,7 @@ class DataLoader:
             img_nums = np.random.randint(self.dataset_size, size=batch_size)
 
             imgs_A = []
-            imgs_B = []
+            target_coords = []
             for img_num in img_nums:
                 img_path_target = glob(
                     'datasets/%s/reference_env/0/RGB/11%s.png' % (self.dataset_name, img_num))
@@ -134,9 +134,10 @@ class DataLoader:
                 img_target = np.array(Image.fromarray(img_target).resize((128,72)))
 
                 imgs_A.append(img_target)
-                img_B = self.data_file[img_num]
-                imgs_B.append([img_B[0], (img_B[1])])
+                target_coord = self.data_file[img_num+11000]
+                target_coords.append([(target_coord[0]/848) * 128, (target_coord[1]/480)*72])
+                # print(imgs_B[-1])
 
             imgs_A = np.array(imgs_A) / 127.5 - 1.
 
-            yield imgs_A, tf.convert_to_tensor((imgs_B), dtype=tf.float32)
+            yield imgs_A, tf.convert_to_tensor((target_coords), dtype=tf.float32)

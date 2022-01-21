@@ -2,10 +2,13 @@ import datetime
 
 import keras.losses
 import numpy as np
+import tensorflow
 from tensorflow.keras.layers import Input, UpSampling1D, ReLU, Conv2D, BatchNormalization, LeakyReLU, Conv2DTranspose, \
     AvgPool2D, \
     UpSampling2D, Concatenate, Dropout
-# import tensorflow_addons as tfa
+
+from tensorflow_addons.layers import InstanceNormalization
+
 from tensorflow.keras import Model
 from tensorflow.keras.optimizers import Adam
 from tensorflow.keras.losses import BinaryCrossentropy, mae
@@ -17,7 +20,13 @@ import os
 import matplotlib.pyplot as plt
 
 from tensorflow.keras import backend as K
+
 sess = compat.v1.Session(config=compat.v1.ConfigProto(log_device_placement=True))
+
+
+# def loss_function(xs, ys):
+#     print("xs shape: ", xs.shape)
+#     return np.mean([tensorflow.keras.losses.binary_crossentropy(xs[i], ys[i]) for i in range(xs)])
 
 
 class RCAN:
@@ -28,18 +37,18 @@ class RCAN:
         self.kernel_size = 3
         self.filters = 32
         # self.img_shape = (472, 472, 3) # from paper
-        self.img_size = 128 #512  # power of 2 so it acc works :/
+        self.img_size = 128  # 512  # power of 2 so it acc works :/
         self.output_size = 58
         self.input_shape = (self.img_size, self.img_size, 3)
         self.rgb_shape = (self.output_size, self.output_size, 3)
         self.seg_shape = (self.output_size, self.output_size, 5)
         self.depth_shape = (self.output_size, self.output_size, 1)
-        self.batch_size = 4 # FIND BATCH SIZE??
+        self.batch_size = 4  # FIND BATCH SIZE??
         # self.patch_sizes = [472, 236, 118]
         # self.patch_sizes = [512, 256, 128]
-        self.patch_sizes=[128, 64, 32]
+        self.patch_sizes = [128, 64, 32]
         self.patch_weights = [1, 1, 1]
-        self.epochs = 20 # ??
+        self.epochs = 20  # ??
         self.lr = None
         self.pool_size = 2
 
@@ -61,7 +70,7 @@ class RCAN:
         c = Conv2D(filters, kernel_size=kernel_size, strides=strides, padding='same')(c)
         if avg_pool:
             c = AvgPool2D(pool_size=(2, 2))(c)  # CHECK ME!!
-        c = BatchNormalization()(c)  # Change to instance norm
+        c = InstanceNormalization()(c)  # Change to instance norm
         c = ReLU()(c)
 
         return c
@@ -124,44 +133,64 @@ class RCAN:
         #
         # depth_out = Conv2D(filters=1, kernel_size=7, activation='tanh')(u10)
 
-        model = Model(inp, rgb_out) #, seg_out, depth_out])
+        model = Model(inp, rgb_out)  # , seg_out, depth_out])
         print(model.summary())
         return model
+
+    def sub_discriminator(self, layer_input):
+        pass
 
     # should be multi-scale patch-based design
     # loss is a sum of discriminator loss with diff patch sizes
     def define_discriminator(self):
 
-        img_A = Input(shape=self.input_shape) # resize from img shape to rgb shape?
+        img_A = Input(shape=self.input_shape)  # resize from img shape to rgb shape?
         img_B = Input(shape=self.input_shape)
 
         combined_imgs = Concatenate(axis=-1)([img_A, img_B])
 
+        combined_imgs_downsample1 = AvgPool2D()(combined_imgs)
+        print("downsample 1: ", combined_imgs_downsample1.shape)
+
+        combined_imgs_downsample2 = AvgPool2D()(combined_imgs_downsample1)
+        print("downsample 2: ", combined_imgs_downsample2.shape)
+
+        # sub discrim 1
         d1 = self.conv2d_layer(combined_imgs, filters=self.filters, kernel_size=3, avg_pool=False)
         d2 = self.conv2d_layer(d1, filters=self.filters, kernel_size=3, avg_pool=False)
         d3 = self.conv2d_layer(d2, filters=self.filters * 2, kernel_size=3, avg_pool=False)
         d4 = self.conv2d_layer(d3, filters=self.filters * 4, kernel_size=3, avg_pool=False)
+        o1 = Conv2D(filters=1, kernel_size=3, padding='same', activation='sigmoid')(d4)  # ??
 
-        # activation functions /normalisation etc???
-        # d1 = Conv2D(filters=self.filters, kernel_size=3, padding='same')(combined_imgs)
-        # print("d1 shape: ", d1.shape)
-        # d2 = Conv2D(filters=self.filters, kernel_size=3, padding='same')(d1)
-        # print("d2 shape: ", d2.shape)
-        # d3 = Conv2D(filters=self.filters * 2, kernel_size=3, padding='same')(d2)
-        # print("d3 shape: ", d3.shape)
-        # d4 = Conv2D(filters=self.filters * 4, kernel_size=3, padding='same')(d3)
+        # sub discrim 2
+        e1 = self.conv2d_layer(combined_imgs_downsample1, filters=self.filters, kernel_size=3, avg_pool=False)
+        e2 = self.conv2d_layer(e1, filters=self.filters, kernel_size=3, avg_pool=False)
+        e3 = self.conv2d_layer(e2, filters=self.filters * 2, kernel_size=3, avg_pool=False)
+        e4 = self.conv2d_layer(e3, filters=self.filters * 4, kernel_size=3, avg_pool=False)
+        o2 = Conv2D(filters=1, kernel_size=3, padding='same', activation='sigmoid')(e4)  # ??
 
-        d5 = Conv2D(filters=1, kernel_size=3, padding='same', activation='sigmoid')(d4) #??
+        # sub discrim 3
+        f1 = self.conv2d_layer(combined_imgs_downsample2, filters=self.filters, kernel_size=3, avg_pool=False)
+        f2 = self.conv2d_layer(f1, filters=self.filters, kernel_size=3, avg_pool=False)
+        f3 = self.conv2d_layer(f2, filters=self.filters * 2, kernel_size=3, avg_pool=False)
+        f4 = self.conv2d_layer(f3, filters=self.filters * 4, kernel_size=3, avg_pool=False)
+        o3 = Conv2D(filters=1, kernel_size=3, padding='same', activation='sigmoid')(f4)  # ??
 
-        print("d5 shape: ", d5.shape)
+        # o1 = sub_descrim(combined_imgs)
+        # o2 = sub_descrim(combined_imgs_downsample1)
+        # o3 = sub_descrim(combined_imgs_downsample2)
+
+        print("d5 shape: ", o1.shape)
         # NEEDS OUTPUT LAYER??
 
-        model = Model([img_A, img_B], d5)
+        model = Model([img_A, img_B], [o1, o2, o3])
+
+        print("MODEL SHAPE!!: ", o1.shape)  # , o2.shape, o3.shape)
 
         print(model.summary())
 
         # What should loss be?? think binary crossentropy is ok
-        model.compile(loss='binary_crossentropy', optimizer=self.opt_D, metrics=['accuracy'])
+        model.compile(loss='binary_crossentropy', optimizer=self.opt_D)  # , metrics=['accuracy'])
 
         return model
 
@@ -187,7 +216,7 @@ class RCAN:
         # depth equality between dc and da
         # use MPSE with l2 for semantic and depth auxiliary losses
         # plus sigmoid cross-entropy gan loss
-        gan.compile(loss=['binary_crossentropy','mse'], loss_weights=[1, 100], optimizer=self.opt_G)
+        gan.compile(loss=['binary_crossentropy', 'mae'], loss_weights=[1, 100], optimizer=self.opt_G)
         return gan
 
     def train(self):
@@ -197,7 +226,9 @@ class RCAN:
         #                        self.patch_sizes]
         valid_patch_outputs = [np.full((self.batch_size,) + (disc_patch, disc_patch, 1), 0.9) for disc_patch in
                                self.patch_sizes]
-        fake_patch_outputs = [np.zeros((self.batch_size,) + (disc_patch, disc_patch, 1)) for disc_patch in
+        # fake_patch_outputs = [np.zeros((self.batch_size,) + (disc_patch, disc_patch, 1)) for disc_patch in
+        #                       self.patch_sizes]
+        fake_patch_outputs = [np.full((self.batch_size,) + (disc_patch, disc_patch, 1), 0.1) for disc_patch in
                               self.patch_sizes]
 
         print(valid_patch_outputs[0].shape, valid_patch_outputs[1].shape, valid_patch_outputs[2].shape)
@@ -205,10 +236,12 @@ class RCAN:
         # fake_outputs = -np.ones((self.batch_size,) + disc_patch)
 
         for epoch in range(self.epochs):
-            for batch_i, (imgs_A, imgs_B) in enumerate(self.data_loader.load_batch(self.batch_size)):
+            for batch_i, (target_img, randomised_img) in enumerate(self.data_loader.load_batch(self.batch_size)):
                 # train discriminator
 
-                fake_A = self.g.predict(imgs_B)
+                fake_A = self.g.predict(randomised_img)
+
+                print("ERROR: ", np.sum(np.abs(np.subtract(target_img, fake_A))))
 
                 # print(imgs_A.shape, imgs_B.shape)
                 # gen_imgs = 0.5 * imgs_A[0] + 0.5
@@ -217,27 +250,36 @@ class RCAN:
                 # plt.show()
                 # plt.imshow(gen_imgs2)
                 # plt.show()
+                d_loss_real = self.d.train_on_batch([target_img, randomised_img], valid_patch_outputs)
 
-                d_loss_real = self.d.train_on_batch([imgs_A, imgs_B], valid_patch_outputs[0])
+                # d_loss_1 = self.d.train_on_batch([imgs_A, imgs_B], valid_patch_outputs[0])
+                # d_loss_2 = self.d.train_on_batch([imgs_A, imgs_B], valid_patch_outputs[1])
+                # d_loss_3 = self.d.train_on_batch([imgs_A, imgs_B], valid_patch_outputs[2])
+                #
+                # print("losses: ", d_loss_1, d_loss_2, d_loss_3)
+                # print("total loss: ", d_loss_real)
+
                 # print("d loss shape: ", d_loss_real)
-                d_loss_fake = self.d.train_on_batch([fake_A, imgs_B], fake_patch_outputs[0])
+                d_loss_fake = self.d.train_on_batch([fake_A, randomised_img], fake_patch_outputs)
+
                 # print("d loss fake: ", d_loss_fake)
                 d_loss = 0.5 * np.add(d_loss_real, d_loss_fake)
 
                 # train generator
-                img_A_resized = resize(imgs_A, (self.output_size, self.output_size, 3))
-                g_loss = self.gan.train_on_batch([imgs_A, imgs_B], [valid_patch_outputs[0], imgs_A])
+                g_loss = self.gan.train_on_batch([randomised_img, target_img], [valid_patch_outputs, target_img])
+
+                print("GAN LOSS: ", g_loss)
 
                 elapsed_time = datetime.datetime.now() - start_time
                 # Plot the progress
-                print("[Epoch %d/%d] [Batch %d/%d] [D loss: %f, acc: %3d%%] [G loss: %f] time: %s" % (epoch,
-                                                                                                      self.epochs,
-                                                                                                      batch_i,
-                                                                                                      self.data_loader.n_batches,
-                                                                                                      d_loss[0],
-                                                                                                      100 * d_loss[1],
-                                                                                                      g_loss[0],
-                                                                                                      elapsed_time))
+                print("[Epoch %d/%d] [Batch %d/%d] [D loss: %f] [G loss: %f] time: %s" % (epoch,
+                                                                                          self.epochs,
+                                                                                          batch_i,
+                                                                                          self.data_loader.n_batches,
+                                                                                          d_loss[0],
+                                                                                          # 100 * d_loss[1],
+                                                                                          g_loss[0],
+                                                                                          elapsed_time))
 
                 if batch_i % self.sample_interval == 0:
                     self.sample_images()
