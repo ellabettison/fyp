@@ -3,7 +3,7 @@ import numpy as np
 import random
 import glob
 from pathlib import Path
-# import bpy
+import bpy
 
 bproc.init()
 
@@ -12,16 +12,13 @@ class Scene:
     def load_obj(self, obj_name, pos, rot, from_file=False, randomise_material=False):
         if from_file:
             obj = bproc.loader.load_obj(obj_name)[0]
-            print("objects: ", obj)
         else:
             obj = bproc.object.create_primitive(obj_name)
         obj.set_location(pos)
         obj.set_rotation_euler(rot)
 
-        # self.materials = bproc.material.collect_all()
-        # print(self.materials)
-
-        # obj.set_material(0, random.choice(self.materials))
+        if randomise_material:
+            self.randomise_material(obj)
 
         return obj, bproc.object.compute_poi([obj])
 
@@ -53,35 +50,34 @@ class Scene:
         x_pos = np.cos(az_angle) * o
         z_pos = np.sin(az_angle) * o
 
-        print(x_pos, y_pos, z_pos)
-
         return x_pos, y_pos, z_pos
 
     def randomise_material(self, obj):
+        obj.add_uv_mapping("cube", overwrite=True)
         # Find all materials
         materials = bproc.material.collect_all()
         # Collect all jpg images in the specified directory
-        images = glob.glob("textures/textures/obj_textures/*.png")
-        # print("Images: ", images)
-        # for mat in materials:
-        # Load one random image
-        #     image = bpy.data.images.load(filepath=str(random.choice(images)))
-        # Set it as base color of the current material
-        #     mat.set_principled_shader_value("Base Color", image)
+        images = glob.glob("C:\\Users\\ellab\\Documents\\fyp\\fyp\\textures\\textures\\obj_textures\\*.png")
+        for mat in materials:
+            # Load one random image
+            random_mat = random.choice(images)
+            print("random mat: ", random_mat)
+            texture = bproc.loader.load_texture(random_mat)
+            mat.infuse_texture(texture[0], mode='set', texture_scale=0.5)
 
     def set_ambient_light(self, brightness):
         ceiling, _ = self.load_obj("blender_objects/plane.obj", [0, 30, 0], [0, 0, 0], True, True)
         bproc.lighting.light_surface([ceiling], emission_strength=brightness)
 
     def render_scene(self):
-        cube, poi = self.load_obj("CUBE", [0, 1, 0], [0, 0, 0])  # self.generate_random_pos(2, -3, 3), [0, 0, 0])
-        _, _ = self.load_obj("SPHERE", [2, 1, 2], [0, 0, 0])
+        cube, poi = self.load_obj("CUBE", [0, 1, 0], [0, 0, 0])
 
-        box, _ = self.load_obj("blender_objects/box_tall.obj", [0, 0, 0], [0, 0, 0], True, True)
+        box, _ = self.load_obj("blender_objects/box_tall2.obj", [0, 0, 0], [0, 0, 0], True, True)
         box.set_scale((2, 2, 2))
+
         print(box.get_bound_box())
 
-        self.randomise_material(box)
+        # self.randomise_material(box)
 
         self.set_spot_light([2, 10, 0], np.random.randint(200,700))
         self.set_ambient_light(np.random.random()*6.0)
@@ -90,8 +86,13 @@ class Scene:
 
         self.set_camera(camera_loc, poi)
         # Render the scene
+        bproc.renderer.set_output_format("PNG")
+        bproc.camera.set_intrinsics_from_blender_params(image_height=128, image_width=128)
+        bproc.renderer.enable_depth_output(activate_antialiasing=False)
         bproc.renderer.set_max_amount_of_samples(30)
         data = bproc.renderer.render()
+
+        data.update(bproc.renderer.render_segmap(map_by=["class", "instance", "name"]))
 
         self.output_file(data)
 
