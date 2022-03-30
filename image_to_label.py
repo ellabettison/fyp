@@ -51,7 +51,7 @@ class ImageToLabel:
         print(model.summary())
 
         # What should loss be?? think binary crossentropy is ok
-        model.compile(loss='mse', optimizer=self.opt, metrics=['mean_squared_error'])
+        model.compile(loss='mse', optimizer=self.opt, metrics=['accuracy'])
 
         return model
 

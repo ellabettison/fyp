@@ -1,28 +1,29 @@
 import datetime
 
-import keras.losses
 import numpy as np
-import tensorflow
-from tensorflow.keras.layers import Input, UpSampling1D, ReLU, Conv2D, BatchNormalization, LeakyReLU, Conv2DTranspose, \
+from tensorflow.keras.layers import Input, ReLU, Conv2D, BatchNormalization, \
     AvgPool2D, \
-    UpSampling2D, Concatenate, Dropout
+    UpSampling2D, Concatenate
 
 from tensorflow_addons.layers import InstanceNormalization
 
 from tensorflow.keras import Model
 from tensorflow.keras.optimizers import Adam
-from tensorflow.keras.losses import BinaryCrossentropy, mae
-from skimage.transform import resize
+# from tensorflow.keras.losses import BinaryCrossentropy, mae
+# from skimage.transform import resize
 from tensorflow import compat
 
 from data_loader import DataLoader
 import os
 import matplotlib.pyplot as plt
-
-from tensorflow.keras import backend as K
+from tensorflow import config
+from tensorflow import debugging
+# from tensorflow.keras import backend as K
 
 sess = compat.v1.Session(config=compat.v1.ConfigProto(log_device_placement=True))
 
+print("Num GPUs Available: ", len(config.list_physical_devices('GPU')))
+# debugging.set_log_device_placement(True)
 
 # def loss_function(xs, ys):
 #     print("xs shape: ", xs.shape)
@@ -32,21 +33,21 @@ sess = compat.v1.Session(config=compat.v1.ConfigProto(log_device_placement=True)
 class RCAN:
 
     def __init__(self):
-        self.dataset_name = "peg_predictions_dataset"
-        self.output_loc = None
+        self.dataset_name = "output"
+        self.output_loc = "generated_imgs"
         self.kernel_size = 3
         self.filters = 32
         # self.img_shape = (472, 472, 3) # from paper
-        self.img_size = 128  # 512  # power of 2 so it acc works :/
+        self.img_size = 64  # 512
         self.output_size = 58
         self.input_shape = (self.img_size, self.img_size, 3)
         self.rgb_shape = (self.output_size, self.output_size, 3)
         self.seg_shape = (self.output_size, self.output_size, 5)
         self.depth_shape = (self.output_size, self.output_size, 1)
-        self.batch_size = 4  # FIND BATCH SIZE??
+        self.batch_size = 16
         # self.patch_sizes = [472, 236, 118]
         # self.patch_sizes = [512, 256, 128]
-        self.patch_sizes = [128, 64, 32]
+        self.patch_sizes = [64, 32, 16]
         self.patch_weights = [1, 1, 1]
         self.epochs = 20  # ??
         self.lr = None
@@ -66,11 +67,10 @@ class RCAN:
     def conv2d_layer(self, layer_inp, filters, strides=1, avg_pool=True, kernel_size=3):
         c = layer_inp
 
-        # padding or nah??
         c = Conv2D(filters, kernel_size=kernel_size, strides=strides, padding='same')(c)
         if avg_pool:
-            c = AvgPool2D(pool_size=(2, 2))(c)  # CHECK ME!!
-        c = InstanceNormalization()(c)  # Change to instance norm
+            c = AvgPool2D(pool_size=(2, 2))(c)
+        c = InstanceNormalization()(c)
         c = ReLU()(c)
 
         return c
@@ -78,20 +78,19 @@ class RCAN:
     def deconv2d_layer(self, layer_input, filters1, filters2=None, skip_input=None, use_skip_input=True,
                        upsample_size=2, strides=1,
                        strides2=1):
-        print("deconv2d layer shape: ", layer_input.shape, skip_input.shape)
         # d = layer_input
         if use_skip_input:
             layer_input = Concatenate()([layer_input, skip_input])
 
         d = Conv2D(filters1, kernel_size=1, strides=strides, padding='same', activation='relu')(
             layer_input)
-        d = BatchNormalization()(d)
+        d = InstanceNormalization()(d) # change to instance norm
 
         d = UpSampling2D(size=upsample_size, interpolation='bilinear')(d)  # CHECK, whats the upsample size??
         if filters2:
             d = Conv2D(filters2, kernel_size=3, strides=strides2, padding='same', activation='relu')(
                 d)
-            d = BatchNormalization()(d)
+            d = InstanceNormalization()(d)
         return d
 
     def define_generator(self):
@@ -102,20 +101,20 @@ class RCAN:
         d3 = self.conv2d_layer(d2, self.filters * 4, avg_pool=False, strides=2)
         d4 = self.conv2d_layer(d3, self.filters * 8)
         d5 = self.conv2d_layer(d4, self.filters * 16)
-        d6 = self.conv2d_layer(d5, self.filters * 32)
+        # d6 = self.conv2d_layer(d5, self.filters * 32)
         # d7 = self.conv2d_layer(d6, self.filters * 32)
 
-        d8 = self.conv2d_layer(d6, self.filters * 32)
+        d8 = self.conv2d_layer(d5, self.filters * 32)
         b0 = AvgPool2D(pool_size=(2, 2))(d8)  # CHECK ME!!
         b1 = UpSampling2D(size=(2, 2), interpolation='bilinear')(b0)
         b2 = Conv2D(filters=self.filters * 32, kernel_size=self.kernel_size, padding='same', activation='relu')(b1)
-        b3 = BatchNormalization()(b2)  # ??
+        b3 = InstanceNormalization()(b2)  # ??
         u1 = UpSampling2D(size=(2, 2), interpolation='bilinear')(b3)
         # u1 = self.deconv2d_layer(b1, filters1=self.filters * 32, use_skip_input=False)
 
         # u2 = self.deconv2d_layer(u1, skip_input=d7, filters1=self.filters * 64, filters2=self.filters * 32)
-        u3 = self.deconv2d_layer(u1, skip_input=d6, filters1=self.filters * 64, filters2=self.filters * 16)
-        u4 = self.deconv2d_layer(u3, skip_input=d5, filters1=self.filters * 32, filters2=self.filters * 8)
+        # u3 = self.deconv2d_layer(u1, skip_input=d6, filters1=self.filters * 64, filters2=self.filters * 16)
+        u4 = self.deconv2d_layer(u1, skip_input=d5, filters1=self.filters * 32, filters2=self.filters * 8)
         u5 = self.deconv2d_layer(u4, skip_input=d4, filters1=self.filters * 16, filters2=self.filters * 4)
         u6 = self.deconv2d_layer(u5, skip_input=d3, filters1=self.filters * 8, filters2=self.filters * 2)
 
@@ -150,10 +149,8 @@ class RCAN:
         combined_imgs = Concatenate(axis=-1)([img_A, img_B])
 
         combined_imgs_downsample1 = AvgPool2D()(combined_imgs)
-        print("downsample 1: ", combined_imgs_downsample1.shape)
 
         combined_imgs_downsample2 = AvgPool2D()(combined_imgs_downsample1)
-        print("downsample 2: ", combined_imgs_downsample2.shape)
 
         # sub discrim 1
         d1 = self.conv2d_layer(combined_imgs, filters=self.filters, kernel_size=3, avg_pool=False)
@@ -180,16 +177,10 @@ class RCAN:
         # o2 = sub_descrim(combined_imgs_downsample1)
         # o3 = sub_descrim(combined_imgs_downsample2)
 
-        print("d5 shape: ", o1.shape)
-        # NEEDS OUTPUT LAYER??
-
         model = Model([img_A, img_B], [o1, o2, o3])
-
-        print("MODEL SHAPE!!: ", o1.shape)  # , o2.shape, o3.shape)
 
         print(model.summary())
 
-        # What should loss be?? think binary crossentropy is ok
         model.compile(loss='binary_crossentropy', optimizer=self.opt_D)  # , metrics=['accuracy'])
 
         return model
@@ -216,20 +207,20 @@ class RCAN:
         # depth equality between dc and da
         # use MPSE with l2 for semantic and depth auxiliary losses
         # plus sigmoid cross-entropy gan loss
-        gan.compile(loss=['binary_crossentropy', 'mae'], loss_weights=[1, 100], optimizer=self.opt_G)
+        gan.compile(loss=['binary_crossentropy', compat.v1.losses.mean_pairwise_squared_error], loss_weights=[1, 1], optimizer=self.opt_G)
         return gan
 
     def train(self):
         start_time = datetime.datetime.now()
 
-        # valid_patch_outputs = [np.ones((self.batch_size,) + (disc_patch, disc_patch, 1)) for disc_patch in
-        #                        self.patch_sizes]
-        valid_patch_outputs = [np.full((self.batch_size,) + (disc_patch, disc_patch, 1), 0.9) for disc_patch in
+        valid_patch_outputs = [np.ones((self.batch_size,) + (disc_patch, disc_patch, 1)) for disc_patch in
                                self.patch_sizes]
-        # fake_patch_outputs = [np.zeros((self.batch_size,) + (disc_patch, disc_patch, 1)) for disc_patch in
-        #                       self.patch_sizes]
-        fake_patch_outputs = [np.full((self.batch_size,) + (disc_patch, disc_patch, 1), 0.1) for disc_patch in
+        # valid_patch_outputs = [np.full((self.batch_size,) + (disc_patch, disc_patch, 1), 0.9) for disc_patch in
+        #                        self.patch_sizes]
+        fake_patch_outputs = [np.zeros((self.batch_size,) + (disc_patch, disc_patch, 1)) for disc_patch in
                               self.patch_sizes]
+        # fake_patch_outputs = [np.full((self.batch_size,) + (disc_patch, disc_patch, 1), 0.1) for disc_patch in
+        #                       self.patch_sizes]
 
         print(valid_patch_outputs[0].shape, valid_patch_outputs[1].shape, valid_patch_outputs[2].shape)
         # valid_outputs = np.ones((self.batch_size,) + disc_patch)
