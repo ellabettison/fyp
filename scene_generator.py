@@ -1,8 +1,8 @@
-import os
 
 import blenderproc as bproc
 import numpy as np
 import glob
+import os
 from pathlib import Path
 # import bpy
 from PIL import Image
@@ -22,23 +22,26 @@ class CanonicalParams:
 
 class RandomisationParams:
     def __init__(self):
-        self.min_ambient_light = 0.3
-        self.max_ambient_light = 1
+        self.min_ambient_light = 0.5
+        self.max_ambient_light = 5
         self.min_spot_light = 0
-        self.max_spot_light = 100
-        self.min_spot_distance = 0.5
+        self.max_spot_light = 200
+        self.min_spot_distance = 1
         self.max_spot_distance = 3
         self.min_camera_distance = 1
         self.max_camera_distance = 2
-        self.camera_perturbation_sd = 0.1  # 0.05
+        self.camera_perturbation_sd = 0.05  # 0.05
         self.no_randomisations = 5
 
 
 class Scene:
-    def __init__(self, canonical_params, randomisation_params):
+    def __init__(self, canonical_params, randomisation_params, output_folder):
         self.c_params = canonical_params
         self.r_params = randomisation_params
         self.images = glob.glob("textures/textures/obj_textures/*.png")
+        self.orange_mat = glob.glob("blender_objects/orange_texture.png")[0]
+        self.blue_mat = glob.glob("blender_objects/blue_texture.png")[0]
+        self.output_folder = output_folder
 
     def load_obj(self, obj_name, pos, rot, from_file=False):
         if from_file:
@@ -76,9 +79,9 @@ class Scene:
         arr_colours = np.array(data.get("colors")[0]).reshape((self.c_params.img_width, self.c_params.img_height, 3))
         im = Image.fromarray(arr_colours)
         if folder == "randomised":
-            im.save("output/%s/%d/%s_%d.png" % (folder, j, folder, i))
+            im.save("%s/%s/%d/%s_%d.png" % (self.output_folder, folder, j, folder, i))
         else:
-            im.save("output/%s/%s_%d.png" % (folder, folder, i))
+            im.save("%s/%s/%s_%d.png" % (self.output_folder, folder, folder, i))
 
         if data.__contains__("depth"):
             arr_depth = np.array(data.get("depth")).reshape((self.c_params.img_width, self.c_params.img_height))
@@ -86,7 +89,7 @@ class Scene:
 
             # np.save("output/depths/depth_%d.npy" % i, arr_depth)
             print("DEPTH: ", arr_depth.shape)
-            plt.imsave("output/depths/depth_%d.png" % i, arr_depth, cmap="turbo")
+            plt.imsave("%s/depths/depth_%d.png" % (self.output_folder, i), arr_depth, cmap="turbo")
             # im = Image.fromarray(np.uint8(cm._colormaps(arr_colours) * 255))
             # im.save("output/depths/depth_%d.png" % i, arr_depth)
 
@@ -94,7 +97,7 @@ class Scene:
             arr_seg = np.array(data.get("instance_segmaps"), dtype=np.float64).reshape(
                 (self.c_params.img_width, self.c_params.img_height))
             arr_seg /= np.max(arr_seg)
-            plt.imsave("output/segmaps/segmap_%d.png" % i, arr_seg, cmap="turbo")
+            plt.imsave("%s/segmaps/segmap_%d.png" % (self.output_folder, i), arr_seg, cmap="turbo")
             # np.save("output/segmaps/segmap_%d.npy" % i, arr_seg)
 
     # def generate_random_pos(self, height, min, max):
@@ -140,11 +143,10 @@ class Scene:
         # for mat in materials:
         #     # Load one random image
         new_mat = bproc.material.create("material")
-        random_mat = np.random.choice(self.images)
-        print("random mat: ", random_mat)
         texture = None
 
-        while texture is None:
+        while texture is None or len(texture) == 0:
+            random_mat = np.random.choice(self.images)
             texture = bproc.loader.load_texture(random_mat)
 
             if texture is None or len(texture) == 0:
@@ -239,12 +241,9 @@ class Scene:
     def generate_environment(self):
         box, _ = self.load_obj("blender_objects/box_tall2.obj", [0, 0, 0], [np.pi / 2, 0, 0], True)
         box.add_uv_mapping("cube", overwrite=True)
-
+        box.clear_materials()
 
         # box.set_scale((2, 2, 2))
-
-
-
 
         box.set_scale((0.2, 0.2, 0.2))
         print("box bb before: ", box.get_bound_box()[0][2])
@@ -277,27 +276,37 @@ class Scene:
                                                         image_width=self.c_params.img_width)
 
         bproc.renderer.enable_depth_output(activate_antialiasing=True)
-        bproc.renderer.set_output_format("PNG")
+        # bproc.renderer.set_output_format("PNG")
 
         # load canonical scene
         cube, poi = self.load_obj("CUBE", [0, 0, 0.1], [0, 0, 0])
         cube.add_uv_mapping("cube", overwrite=True)
         cube.set_scale((0.1, 0.1, 0.1))
+        cube.clear_materials()
 
         print("CUBE BB: ", cube.get_bound_box())
 
         ceiling, box = self.generate_environment()
 
-        box_orig_mat = box.get_materials()[0]
+        orange_mat = bproc.material.create("orange_mat")
+        orange_texture = bproc.loader.load_texture(self.orange_mat)
+        orange_mat.infuse_texture(orange_texture[0], mode='set', texture_scale=1)
+        cube.add_material(orange_mat)
+
+        blue_mat = bproc.material.create("blue_mat")
+        blue_texture = bproc.loader.load_texture(self.blue_mat)
+        blue_mat.infuse_texture(blue_texture[0], mode='set', texture_scale=1)
 
         for i in range(no_images):
-            os.environ["BLENDER_PROC_RANDOM_SEED"] = "i"
-            np.random.seed(i)
+            # 100= random number chosen to ensure no overlap when mutliple materials have to
+            # be generated
+            os.environ["BLENDER_PROC_RANDOM_SEED"] = str(i*self.r_params.no_randomisations*100)
+            np.random.seed(i*self.r_params.no_randomisations*100)
 
             bproc.utility.reset_keyframes()
 
             box.clear_materials()
-            box.add_material(box_orig_mat)
+            box.add_material(blue_mat)
             bproc.lighting.light_surface([ceiling], emission_strength=self.c_params.ambient_light)
 
             cam_pose, visible = self.generate_pos_bb_visible(poi, self.r_params.min_camera_distance,
@@ -317,6 +326,7 @@ class Scene:
             self.output_file(data, "canonical", i, 0)
 
             for j in range(randomisation_params.no_randomisations):
+
                 bproc.utility.reset_keyframes()
 
                 # randomise environment
@@ -336,7 +346,7 @@ class Scene:
 canonical_params = CanonicalParams()
 randomisation_params = RandomisationParams()
 
-scene = Scene(canonical_params, randomisation_params)
+scene = Scene(canonical_params, randomisation_params, "generated_imgs")
 scene.render_scene(no_images=10000)
 # scene.generate_env_with_checkerboard()
 

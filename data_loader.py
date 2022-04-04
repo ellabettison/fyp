@@ -8,17 +8,17 @@ import tensorflow as tf
 
 
 class DataLoader:
-    def __init__(self, dataset_name, img_res=(64, 64), data_to_use=None):
+    def __init__(self, data_folder, img_res=(64, 64), data_to_use=None):
         self.n_batches = 1
-        self.dataset_name = dataset_name
+        self.data_folder = data_folder
         self.img_res = img_res
         # self.dataset_size = 29961
-        self.dataset_size = 1111
+        self.dataset_size = 437
         self.randomisations = 5
         self.data_to_use = data_to_use
         if self.data_to_use:
-            self.data_file = np.load("output/canonical/%s" %  self.data_to_use)
-            print(np.max(self.data_file[:,1]))
+            self.data_file = np.load("%s/canonical/%s" % (self.data_folder, self.data_to_use))
+            print(np.max(self.data_file[:, 1]))
         # Convert to Lab colourspace
         # srgb_p = ImageCms.createProfile("sRGB")
         # lab_p = ImageCms.createProfile("LAB")
@@ -37,15 +37,15 @@ class DataLoader:
         for i in range(len(img_nums)):
             randomisation = np.random.randint(self.randomisations)
             img_path_randomised = glob(
-                'output/randomised/%s/randomised_%s.png' % (randomisation, img_nums[i]))
+                '%s/randomised/%s/randomised_%s.png' % (self.data_folder, randomisation, img_nums[i]))
 
             while len(img_path_randomised) == 0:
                 img_nums[i] = np.random.randint(self.dataset_size)
-                img_path_randomised = glob('output/randomised/%s/randomised_%s.png' % (
-                    randomisation, img_nums[i]))
+                img_path_randomised = glob('%s/randomised/%s/randomised_%s.png' % (
+                    self.data_folder, randomisation, img_nums[i]))
 
             img_path_target = glob(
-                'output/canonical/canonical_%s.png' % ( img_nums[i]))
+                '%s/canonical/canonical_%s.png' % (self.data_folder, img_nums[i]))
 
             print("IMG PATH: ", img_path_randomised)
 
@@ -79,14 +79,14 @@ class DataLoader:
         # path = glob('./datasets/%s/%s/*' % (self.dataset_name, data_type))
         # random.shuffle(path)
 
-        self.n_batches = int((self.dataset_size*self.randomisations) / batch_size)
+        self.n_batches = int((self.dataset_size * self.randomisations) / batch_size)
 
         rand_order = list(itertools.product(range(self.dataset_size), range(self.randomisations)))
         np.random.shuffle(rand_order)
 
         for i in range(self.n_batches - 1):
             # img_nums = np.random.randint(self.dataset_size, size=batch_size)
-            img_nums = rand_order[i*batch_size:i*batch_size+batch_size]
+            img_nums = rand_order[i * batch_size:i * batch_size + batch_size]
 
             # path = glob('./datasets/%s/%s/*' % (self.dataset_name))
             # batch_images = np.random.choice(path, size=batch_size)
@@ -95,19 +95,19 @@ class DataLoader:
             imgs_B = []
             for j in range(len(img_nums)):
 
-                img_path_randomised = glob('output/randomised/%s/randomised_%s.png' % (
-                    img_nums[j][1], img_nums[j][0]))
+                img_path_randomised = glob('%s/randomised/%s/randomised_%s.png' % (
+                    self.data_folder, img_nums[j][1], img_nums[j][0]))
 
                 while len(img_path_randomised) == 0:
                     img_nums[j] = (np.random.randint(self.dataset_size), img_nums[j][1])
-                    img_path_randomised = glob('output/randomised/%s/randomised_%s.png' % (
-                        img_nums[j][1], img_nums[j][0]))
+                    img_path_randomised = glob('%s/randomised/%s/randomised_%s.png' % (
+                        self.data_folder, img_nums[j][1], img_nums[j][0]))
 
                 # print(img_path_randomised)
                 # print(img_num, randomisation, '/datasets/%s/different_randomisations/%s/RGB/11%s.png' % (
                 #     self.dataset_name, randomisation, img_num))
                 img_path_target = glob(
-                    'output/canonical/canonical_%s.png' % img_nums[j][0])
+                    '%s/canonical/canonical_%s.png' % (self.data_folder, img_nums[j][0]))
                 img_randomised = self.imread(img_path_randomised[0])
                 img_target = self.imread(img_path_target[0])
 
@@ -149,14 +149,14 @@ class DataLoader:
             target_coords = []
             for img_num in img_nums:
                 img_path_target = glob(
-                    'output/canonical/canonical_%s.png' % (img_num))
+                    '%s/canonical/canonical_%s.png' % (self.data_folder, img_num))
                 img_target = self.imread(img_path_target[0])
 
-                img_target = np.array(Image.fromarray(img_target).resize((64,64)))
+                img_target = np.array(Image.fromarray(img_target).resize((64, 64)))
 
                 imgs_A.append(img_target)
-                target_coord = self.data_file[img_num+11000]
-                target_coords.append([(target_coord[0]/848) * 128, (target_coord[1]/480)*72])
+                target_coord = self.data_file[img_num + 11000]
+                target_coords.append([(target_coord[0] / 848) * 128, (target_coord[1] / 480) * 72])
                 # print(imgs_B[-1])
 
             imgs_A = np.array(imgs_A) / 127.5 - 1.

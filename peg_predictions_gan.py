@@ -17,7 +17,7 @@ from data_loader import DataLoader
 import os
 import matplotlib.pyplot as plt
 from tensorflow import config
-from tensorflow import debugging
+from tensorflow.keras import optimizers
 # from tensorflow.keras import backend as K
 
 sess = compat.v1.Session(config=compat.v1.ConfigProto(log_device_placement=True))
@@ -29,12 +29,11 @@ print("Num GPUs Available: ", len(config.list_physical_devices('GPU')))
 #     print("xs shape: ", xs.shape)
 #     return np.mean([tensorflow.keras.losses.binary_crossentropy(xs[i], ys[i]) for i in range(xs)])
 
-
 class RCAN:
 
     def __init__(self):
-        self.dataset_name = "output"
-        self.output_loc = "generated_imgs"
+        self.dataset_name = "generated_imgs"
+        # self.output_loc = ""
         self.kernel_size = 3
         self.filters = 32
         # self.img_shape = (472, 472, 3) # from paper
@@ -50,15 +49,21 @@ class RCAN:
         self.patch_sizes = [64, 32, 16]
         self.patch_weights = [1, 1, 1]
         self.epochs = 20  # ??
-        self.lr = None
+        self.lr = 0.0002
         self.pool_size = 2
 
         self.sample_interval = 5
         self.model_save_interval = 100
 
-        self.opt_G = Adam(lr=0.0002)  # OPTIMISER??
-        self.opt_D = Adam(lr=0.0002)
-        self.data_loader = DataLoader(dataset_name=self.dataset_name)
+        self.lr_schedule = optimizers.schedules.ExponentialDecay(
+            initial_learning_rate=self.lr,
+            decay_steps=100,
+            decay_rate=0.95
+        )
+
+        self.opt_G = optimizers.Adam(learning_rate=self.lr_schedule, beta_1=0.5)  # OPTIMISER??
+        self.opt_D = optimizers.Adam(learning_rate=self.lr_schedule, beta_1=0.5)
+        self.data_loader = DataLoader(data_folder=self.dataset_name)
 
         self.g = self.define_generator()
         self.d = self.define_discriminator()
@@ -84,9 +89,9 @@ class RCAN:
 
         d = Conv2D(filters1, kernel_size=1, strides=strides, padding='same', activation='relu')(
             layer_input)
-        d = InstanceNormalization()(d) # change to instance norm
+        d = InstanceNormalization()(d)
 
-        d = UpSampling2D(size=upsample_size, interpolation='bilinear')(d)  # CHECK, whats the upsample size??
+        d = UpSampling2D(size=upsample_size, interpolation='bilinear')(d)
         if filters2:
             d = Conv2D(filters2, kernel_size=3, strides=strides2, padding='same', activation='relu')(
                 d)
@@ -113,7 +118,7 @@ class RCAN:
         # u1 = self.deconv2d_layer(b1, filters1=self.filters * 32, use_skip_input=False)
 
         # u2 = self.deconv2d_layer(u1, skip_input=d7, filters1=self.filters * 64, filters2=self.filters * 32)
-        # u3 = self.deconv2d_layer(u1, skip_input=d6, filters1=self.filters * 64, filters2=self.filters * 16)
+        # u3 = self.deconv2d_layer(u1, skip_input=d7, filters1=self.filters * 64, filters2=self.filters * 16)
         u4 = self.deconv2d_layer(u1, skip_input=d5, filters1=self.filters * 32, filters2=self.filters * 8)
         u5 = self.deconv2d_layer(u4, skip_input=d4, filters1=self.filters * 16, filters2=self.filters * 4)
         u6 = self.deconv2d_layer(u5, skip_input=d3, filters1=self.filters * 8, filters2=self.filters * 2)
@@ -207,7 +212,9 @@ class RCAN:
         # depth equality between dc and da
         # use MPSE with l2 for semantic and depth auxiliary losses
         # plus sigmoid cross-entropy gan loss
-        gan.compile(loss=['binary_crossentropy', compat.v1.losses.mean_pairwise_squared_error], loss_weights=[1, 1], optimizer=self.opt_G)
+        # instead of mse, should be compat.v1.losses.mean_pairwise_squared_error
+
+        gan.compile(loss=['binary_crossentropy', 'mse'], loss_weights=[1, 1], optimizer=self.opt_G)
         return gan
 
     def train(self):
@@ -222,10 +229,6 @@ class RCAN:
         # fake_patch_outputs = [np.full((self.batch_size,) + (disc_patch, disc_patch, 1), 0.1) for disc_patch in
         #                       self.patch_sizes]
 
-        print(valid_patch_outputs[0].shape, valid_patch_outputs[1].shape, valid_patch_outputs[2].shape)
-        # valid_outputs = np.ones((self.batch_size,) + disc_patch)
-        # fake_outputs = -np.ones((self.batch_size,) + disc_patch)
-
         for epoch in range(self.epochs):
             for batch_i, (target_img, randomised_img) in enumerate(self.data_loader.load_batch(self.batch_size)):
                 # train discriminator
@@ -234,26 +237,10 @@ class RCAN:
 
                 print("ERROR: ", np.sum(np.abs(np.subtract(target_img, fake_A))))
 
-                # print(imgs_A.shape, imgs_B.shape)
-                # gen_imgs = 0.5 * imgs_A[0] + 0.5
-                # gen_imgs2 = 0.5 * imgs_B[0] + 0.5
-                # plt.imshow(gen_imgs)
-                # plt.show()
-                # plt.imshow(gen_imgs2)
-                # plt.show()
                 d_loss_real = self.d.train_on_batch([target_img, randomised_img], valid_patch_outputs)
 
-                # d_loss_1 = self.d.train_on_batch([imgs_A, imgs_B], valid_patch_outputs[0])
-                # d_loss_2 = self.d.train_on_batch([imgs_A, imgs_B], valid_patch_outputs[1])
-                # d_loss_3 = self.d.train_on_batch([imgs_A, imgs_B], valid_patch_outputs[2])
-                #
-                # print("losses: ", d_loss_1, d_loss_2, d_loss_3)
-                # print("total loss: ", d_loss_real)
-
-                # print("d loss shape: ", d_loss_real)
                 d_loss_fake = self.d.train_on_batch([fake_A, randomised_img], fake_patch_outputs)
 
-                # print("d loss fake: ", d_loss_fake)
                 d_loss = 0.5 * np.add(d_loss_real, d_loss_fake)
 
                 # train generator
@@ -272,6 +259,8 @@ class RCAN:
                                                                                           g_loss[0],
                                                                                           elapsed_time))
 
+                print("LEARNIGN RATE: ", self.opt_G._decayed_lr('float32'))
+
                 if batch_i % self.sample_interval == 0:
                     self.sample_images()
                 if epoch % self.model_save_interval == 0 and batch_i == 0:
@@ -279,7 +268,7 @@ class RCAN:
 
     def sample_images(self):
         # print("saving figs")
-        os.makedirs('%s/%s' % (self.output_loc, self.dataset_name), exist_ok=True)
+        # os.makedirs('%s/%s' % (self.output_loc, self.dataset_name), exist_ok=True)
         r, c = 3, 3
 
         imgs_A, imgs_B = self.data_loader.load_data(batch_size=3)
