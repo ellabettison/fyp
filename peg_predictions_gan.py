@@ -19,6 +19,7 @@ import matplotlib.pyplot as plt
 from tensorflow import config
 from tensorflow.keras import optimizers
 # from tensorflow.keras import backend as K
+from tensorflow.keras import initializers
 
 sess = compat.v1.Session(config=compat.v1.ConfigProto(log_device_placement=True))
 
@@ -43,26 +44,35 @@ class RCAN:
         self.rgb_shape = (self.output_size, self.output_size, 3)
         self.seg_shape = (self.output_size, self.output_size, 5)
         self.depth_shape = (self.output_size, self.output_size, 1)
-        self.batch_size = 16
+        self.batch_size = 32
         # self.patch_sizes = [472, 236, 118]
         # self.patch_sizes = [512, 256, 128]
         self.patch_sizes = [64, 32, 16]
         self.patch_weights = [1, 1, 1]
         self.epochs = 20  # ??
-        self.lr = 0.0002
+        self.g_lr = 0.0001
+        self.d_lr = 0.0001
         self.pool_size = 2
+        self.initialiser_stddev = 0.02
+        self.initialiser = initializers.RandomNormal(stddev=self.initialiser_stddev)
 
         self.sample_interval = 5
         self.model_save_interval = 100
 
-        self.lr_schedule = optimizers.schedules.ExponentialDecay(
-            initial_learning_rate=self.lr,
+        self.g_lr_schedule = optimizers.schedules.ExponentialDecay(
+            initial_learning_rate=self.g_lr,
             decay_steps=100,
             decay_rate=0.95
         )
 
-        self.opt_G = optimizers.Adam(learning_rate=self.lr_schedule, beta_1=0.5)  # OPTIMISER??
-        self.opt_D = optimizers.Adam(learning_rate=self.lr_schedule, beta_1=0.5)
+        self.d_lr_schedule = optimizers.schedules.ExponentialDecay(
+            initial_learning_rate=self.d_lr,
+            decay_steps=100,
+            decay_rate=0.95
+        )
+
+        self.opt_G = optimizers.Adam(learning_rate=self.g_lr_schedule, beta_1=0.5)  # OPTIMISER??
+        self.opt_D = optimizers.Adam(learning_rate=self.d_lr_schedule, beta_1=0.5)
         self.data_loader = DataLoader(data_folder=self.dataset_name)
 
         self.g = self.define_generator()
@@ -72,7 +82,7 @@ class RCAN:
     def conv2d_layer(self, layer_inp, filters, strides=1, avg_pool=True, kernel_size=3):
         c = layer_inp
 
-        c = Conv2D(filters, kernel_size=kernel_size, strides=strides, padding='same')(c)
+        c = Conv2D(filters, kernel_size=kernel_size, strides=strides, padding='same', kernel_initializer=self.initialiser)(c)
         if avg_pool:
             c = AvgPool2D(pool_size=(2, 2))(c)
         c = InstanceNormalization()(c)
@@ -87,18 +97,19 @@ class RCAN:
         if use_skip_input:
             layer_input = Concatenate()([layer_input, skip_input])
 
-        d = Conv2D(filters1, kernel_size=1, strides=strides, padding='same', activation='relu')(
+        d = Conv2D(filters1, kernel_size=1, strides=strides, padding='same', activation='relu', kernel_initializer=self.initialiser)(
             layer_input)
         d = InstanceNormalization()(d)
 
         d = UpSampling2D(size=upsample_size, interpolation='bilinear')(d)
         if filters2:
-            d = Conv2D(filters2, kernel_size=3, strides=strides2, padding='same', activation='relu')(
+            d = Conv2D(filters2, kernel_size=3, strides=strides2, padding='same', activation='relu', kernel_initializer=self.initialiser)(
                 d)
             d = InstanceNormalization()(d)
         return d
 
     def define_generator(self):
+
         inp = Input(shape=self.input_shape)
 
         d1 = self.conv2d_layer(inp, self.filters, kernel_size=7, avg_pool=False)
@@ -109,29 +120,30 @@ class RCAN:
         # d6 = self.conv2d_layer(d5, self.filters * 32)
         # d7 = self.conv2d_layer(d6, self.filters * 32)
 
-        d8 = self.conv2d_layer(d5, self.filters * 32)
-        b0 = AvgPool2D(pool_size=(2, 2))(d8)  # CHECK ME!!
-        b1 = UpSampling2D(size=(2, 2), interpolation='bilinear')(b0)
-        b2 = Conv2D(filters=self.filters * 32, kernel_size=self.kernel_size, padding='same', activation='relu')(b1)
+        d8 = Conv2D(filters=self.filters*32, kernel_size=self.kernel_size, padding='same', activation='relu', kernel_initializer=self.initialiser)(d5)
+        # d8 = self.conv2d_layer(d5, self.filters * 32)
+        # b0 = AvgPool2D(pool_size=(2, 2))(d8)  # CHECK ME!!
+        # b1 = UpSampling2D(size=(2, 2), interpolation='bilinear')(d8)
+        b2 = Conv2D(filters=self.filters * 32, kernel_size=self.kernel_size, padding='same', activation='relu', kernel_initializer=self.initialiser)(d8)
         b3 = InstanceNormalization()(b2)  # ??
-        u1 = UpSampling2D(size=(2, 2), interpolation='bilinear')(b3)
+        # u1 = UpSampling2D(size=(2, 2), interpolation='bilinear')(b3)
         # u1 = self.deconv2d_layer(b1, filters1=self.filters * 32, use_skip_input=False)
 
         # u2 = self.deconv2d_layer(u1, skip_input=d7, filters1=self.filters * 64, filters2=self.filters * 32)
         # u3 = self.deconv2d_layer(u1, skip_input=d7, filters1=self.filters * 64, filters2=self.filters * 16)
-        u4 = self.deconv2d_layer(u1, skip_input=d5, filters1=self.filters * 32, filters2=self.filters * 8)
-        u5 = self.deconv2d_layer(u4, skip_input=d4, filters1=self.filters * 16, filters2=self.filters * 4)
-        u6 = self.deconv2d_layer(u5, skip_input=d3, filters1=self.filters * 8, filters2=self.filters * 2)
+        # u4 = self.deconv2d_layer(u1, skip_input=d5, filters1=self.filters * 32, filters2=self.filters * 8)
+        u5 = self.deconv2d_layer(b3, skip_input=d5, filters1=self.filters * 16, filters2=self.filters * 4)
+        u6 = self.deconv2d_layer(u5, skip_input=d4, filters1=self.filters * 8, filters2=self.filters * 2)
 
-        u7 = self.deconv2d_layer(u6, skip_input=d2, filters1=self.filters * 4, filters2=self.filters)
-
-        # u8 = self.deconv2d_layer(u5, skip_input=d3, filters1=self.filters * 8, filters2=self.filters * 4)
+        u7 = self.deconv2d_layer(u6, skip_input=d3, filters1=self.filters * 4, filters2=self.filters)
+        # u8 = UpSampling2D(size=(2,2), interpolation='bilinear')(u7)
+        u8 = self.deconv2d_layer(u7, skip_input=d2, filters1=self.filters * 8, filters2=self.filters * 4)
         # u7 = Conv2D(filters=self.filters * 2, kernel_size=3, strides=2, padding='same')(u6)
         # u8 = BatchNormalization()(u7)
         # u9 = Conv2D(filters=self.filters, kernel_size=7, padding='same')(u8)
         # u10 = BatchNormalization()(u9)
 
-        rgb_out = Conv2D(filters=3, kernel_size=self.kernel_size, padding='same', activation='tanh')(u7)
+        rgb_out = Conv2D(filters=3, kernel_size=self.kernel_size, padding='same', activation='tanh', kernel_initializer=self.initialiser)(u8)
 
         # seg_out = Conv2D(filters=5, kernel_size=7, activation='tanh')(u10)
         #
@@ -162,21 +174,21 @@ class RCAN:
         d2 = self.conv2d_layer(d1, filters=self.filters, kernel_size=3, avg_pool=False)
         d3 = self.conv2d_layer(d2, filters=self.filters * 2, kernel_size=3, avg_pool=False)
         d4 = self.conv2d_layer(d3, filters=self.filters * 4, kernel_size=3, avg_pool=False)
-        o1 = Conv2D(filters=1, kernel_size=3, padding='same', activation='sigmoid')(d4)  # ??
+        o1 = Conv2D(filters=1, kernel_size=3, padding='same', activation='sigmoid', kernel_initializer=self.initialiser)(d4)  # ??
 
         # sub discrim 2
         e1 = self.conv2d_layer(combined_imgs_downsample1, filters=self.filters, kernel_size=3, avg_pool=False)
         e2 = self.conv2d_layer(e1, filters=self.filters, kernel_size=3, avg_pool=False)
         e3 = self.conv2d_layer(e2, filters=self.filters * 2, kernel_size=3, avg_pool=False)
         e4 = self.conv2d_layer(e3, filters=self.filters * 4, kernel_size=3, avg_pool=False)
-        o2 = Conv2D(filters=1, kernel_size=3, padding='same', activation='sigmoid')(e4)  # ??
+        o2 = Conv2D(filters=1, kernel_size=3, padding='same', activation='sigmoid', kernel_initializer=self.initialiser)(e4)  # ??
 
         # sub discrim 3
         f1 = self.conv2d_layer(combined_imgs_downsample2, filters=self.filters, kernel_size=3, avg_pool=False)
         f2 = self.conv2d_layer(f1, filters=self.filters, kernel_size=3, avg_pool=False)
         f3 = self.conv2d_layer(f2, filters=self.filters * 2, kernel_size=3, avg_pool=False)
         f4 = self.conv2d_layer(f3, filters=self.filters * 4, kernel_size=3, avg_pool=False)
-        o3 = Conv2D(filters=1, kernel_size=3, padding='same', activation='sigmoid')(f4)  # ??
+        o3 = Conv2D(filters=1, kernel_size=3, padding='same', activation='sigmoid', kernel_initializer=self.initialiser)(f4)  # ??
 
         # o1 = sub_descrim(combined_imgs)
         # o2 = sub_descrim(combined_imgs_downsample1)
@@ -214,7 +226,7 @@ class RCAN:
         # plus sigmoid cross-entropy gan loss
         # instead of mse, should be compat.v1.losses.mean_pairwise_squared_error
 
-        gan.compile(loss=['binary_crossentropy', 'mse'], loss_weights=[1, 1], optimizer=self.opt_G)
+        gan.compile(loss=['binary_crossentropy', 'mse'], loss_weights=[1, 10], optimizer=self.opt_G)
         return gan
 
     def train(self):
