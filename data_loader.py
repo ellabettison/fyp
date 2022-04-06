@@ -8,12 +8,12 @@ import tensorflow as tf
 
 
 class DataLoader:
-    def __init__(self, data_folder, img_res=(64, 64), data_to_use=None):
+    def __init__(self, data_folder, img_res=(128, 128), data_to_use=None):
         self.n_batches = 1
         self.data_folder = data_folder
         self.img_res = img_res
         # self.dataset_size = 29961
-        self.dataset_size = 437
+        self.dataset_size = 1100
         self.randomisations = 5
         self.data_to_use = data_to_use
         if self.data_to_use:
