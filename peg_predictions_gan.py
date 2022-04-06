@@ -50,8 +50,8 @@ class RCAN:
         self.patch_sizes = [64, 32, 16]
         self.patch_weights = [1, 1, 1]
         self.epochs = 20  # ??
-        self.g_lr = 0.0001
-        self.d_lr = 0.0001
+        self.g_lr = 0.00003
+        self.d_lr = 0.00003
         self.pool_size = 2
         self.initialiser_stddev = 0.02
         self.initialiser = initializers.RandomNormal(stddev=self.initialiser_stddev)
