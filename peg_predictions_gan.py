@@ -34,8 +34,8 @@ print("Num GPUs Available: ", len(config.list_physical_devices('GPU')))
 class RCAN:
 
     def __init__(self):
-        self.dataset_name = "/vol/bitbucket/efb4518/fyp/fyp/generated_imgs"
-        self.output_loc = "/vol/bitbucket/efb4518/fyp/fyp/generated_samples2"
+        self.dataset_name = "/vol/bitbucket/efb4518/fyp/fyp/generated_imgs_large"
+        self.output_loc = "/vol/bitbucket/efb4518/fyp/fyp/generated_samples"
         self.kernel_size = 3
         self.filters = 32
         # self.img_shape = (472, 472, 3) # from paper
@@ -45,19 +45,19 @@ class RCAN:
         self.rgb_shape = (self.output_size, self.output_size, 3)
         self.seg_shape = (self.output_size, self.output_size, 5)
         self.depth_shape = (self.output_size, self.output_size, 1)
-        self.batch_size = 16
+        self.batch_size = 3 #16
         # self.patch_sizes = [472, 236, 118]
         # self.patch_sizes = [512, 256, 128]
         self.patch_sizes = [128, 64, 32]
         self.patch_weights = [1, 1, 1]
-        self.epochs = 10  # ??
+        self.epochs = 1000  # ??
         self.g_lr = 0.00002
         self.d_lr = 0.00002
         self.pool_size = 2
         self.initialiser_stddev = 0.02
         self.initialiser = initializers.RandomNormal(stddev=self.initialiser_stddev)
 
-        self.sample_interval = 20
+        self.sample_interval = 5
         self.model_save_interval = 100
 
         self.g_lr_schedule = optimizers.schedules.ExponentialDecay(
@@ -117,30 +117,33 @@ class RCAN:
         d1 = self.conv2d_layer(inp, self.filters, kernel_size=7, avg_pool=False)
         d2 = self.conv2d_layer(d1, self.filters * 2, avg_pool=False, strides=2)
         d3 = self.conv2d_layer(d2, self.filters * 4, avg_pool=False, strides=2)
-        d4 = self.conv2d_layer(d3, self.filters * 8)
-        d5 = self.conv2d_layer(d4, self.filters * 16)
-        d6 = self.conv2d_layer(d5, self.filters * 32, avg_pool=False)
-        # d7 = self.conv2d_layer(d6, self.filters * 32)
+        d4 = self.conv2d_layer(d3, self.filters * 8) #, avg_pool=False)
+        d5 = self.conv2d_layer(d4, self.filters * 16) #, avg_pool=False)
+        d6 = self.conv2d_layer(d5, self.filters * 32) #, avg_pool=False)
+        d7 = self.conv2d_layer(d6, self.filters * 32)
 
         # d8 = Conv2D(filters=self.filters*32, kernel_size=self.kernel_size, padding='same', activation='relu', kernel_initializer=self.initialiser)(d5)
-        d8 = self.conv2d_layer(d6, self.filters * 32, avg_pool=False)
+        d8 = self.conv2d_layer(d7, self.filters * 32) #, avg_pool=False)
         # b4 = UpSampling2D(size=(2, 2), interpolation='bilinear')(d8)
-        u1 = self.deconv2d_layer(d8, filters1=self.filters * 32, use_skip_input=False, use_upsampling=False)
+        u1 = self.deconv2d_layer(d8, filters1=self.filters * 32, use_skip_input=False) #, use_upsampling=False)
 
         # u2 = self.deconv2d_layer(u1, skip_input=d6, filters1=self.filters * 64, filters2=self.filters * 32)#, use_upsampling=False)
-        # u2 = self.deconv2d_layer(u1, skip_input=d7, filters1=self.filters * 32, filters2=self.filters * 16)
-        u3 = self.deconv2d_layer(u1, skip_input=d5, filters1=self.filters * 32, filters2=self.filters * 8)#, use_upsampling=False)
-        u4 = self.deconv2d_layer(u3, skip_input=d4, filters1=self.filters * 16, filters2=self.filters * 4)#, use_upsampling=False)
-        u5 = self.deconv2d_layer(u4, skip_input=d3, filters1=self.filters * 8, filters2=self.filters * 2)#, use_upsampling=False)
+        u2 = self.deconv2d_layer(u1, skip_input=d7, filters1=self.filters * 64, filters2=self.filters * 32)
+        u3 = self.deconv2d_layer(u2, skip_input=d6, filters1=self.filters * 64, filters2=self.filters * 16)#, use_upsampling=False)
+        u4 = self.deconv2d_layer(u3, skip_input=d5, filters1=self.filters * 32, filters2=self.filters * 8)#, use_upsampling=False)
+        u5 = self.deconv2d_layer(u4, skip_input=d4, filters1=self.filters * 16, filters2=self.filters * 4) #, use_upsampling=False)
 
-        u6 = self.deconv2d_layer(u5, skip_input=d2, filters1=self.filters * 4, filters2=self.filters)
-        # u8 = self.deconv2d_layer(u6, use_skip_input=False, filters1=self.filters * 8, filters2=self.filters * 4)
-        u8 = Conv2D(filters=self.filters * 2, kernel_size=3, strides=1, padding='same')(u6)
-        u9 = InstanceNormalization()(u8)
+        u6 = self.deconv2d_layer(u5, skip_input=d3, filters1=self.filters * 8, filters2=self.filters * 4) #, use_upsampling=False)
+        
+        u7 = UpSampling2D(size=(2,2), interpolation='bilinear')(u6)
+        u8 = self.deconv2d_layer(u7, use_skip_input=False, filters1=self.filters * 4, filters2=self.filters *2, strides2=2)
+        u9 = Conv2D(filters=self.filters * 2, kernel_size=3, strides=1, padding='same', activation='relu')(u8)
+        u10 = InstanceNormalization()(u9)
+
         # u10 = Conv2D(filters=self.filters, kernel_size=3, padding='same')(u9)
         # u11 = InstanceNormalization()(u10)
 
-        rgb_out = Conv2D(filters=3, kernel_size=self.kernel_size, padding='same', activation='tanh', kernel_initializer=self.initialiser)(u9)
+        rgb_out = Conv2D(filters=3, kernel_size=3, padding='same', activation='tanh', kernel_initializer=self.initialiser)(u10)
 
         # seg_out = Conv2D(filters=5, kernel_size=7, activation='tanh')(u10)
         #
@@ -158,9 +161,9 @@ class RCAN:
     def define_discriminator(self):
 
         img_A = Input(shape=self.input_shape)  # resize from img shape to rgb shape?
-        img_B = Input(shape=self.input_shape)
+        cond_img = Input(shape=self.input_shape)
 
-        combined_imgs = Concatenate(axis=-1)([img_A, img_B])
+        combined_imgs = Concatenate(axis=-1)([img_A, cond_img])
 
         combined_imgs_downsample1 = AvgPool2D()(combined_imgs)
 
@@ -191,7 +194,7 @@ class RCAN:
         # o2 = sub_descrim(combined_imgs_downsample1)
         # o3 = sub_descrim(combined_imgs_downsample2)
 
-        model = Model([img_A, img_B], [o1, o2, o3])
+        model = Model([img_A, cond_img], [o1, o2, o3])
 
         print(model.summary())
 
