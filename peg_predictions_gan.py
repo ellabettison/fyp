@@ -5,12 +5,10 @@ from tensorflow.keras.layers import Input, ReLU, Conv2D, BatchNormalization, \
     AvgPool2D, \
     UpSampling2D, Concatenate
 
-from tensorflow_addons.layers import InstanceNormalization
+from tensorflow_addons.layers import InstanceNormalization # TODO: tensorflow_addons check version compatability
 
 from tensorflow.keras import Model
 from tensorflow.keras.optimizers import Adam
-# from tensorflow.keras.losses import BinaryCrossentropy, mae
-# from skimage.transform import resize
 from tensorflow import compat
 
 from data_loader import DataLoader
@@ -18,63 +16,55 @@ import os
 import matplotlib.pyplot as plt
 from tensorflow import config
 from tensorflow.keras import optimizers
-# from tensorflow.keras import backend as K
 from tensorflow.keras import initializers
 
 gpu_options = compat.v1.GPUOptions(allow_growth=True)
 sess = compat.v1.Session(config=compat.v1.ConfigProto(gpu_options=gpu_options, log_device_placement=True))
 
 print("Num GPUs Available: ", len(config.list_physical_devices('GPU')))
-# debugging.set_log_device_placement(True)
-
-# def loss_function(xs, ys):
-#     print("xs shape: ", xs.shape)
-#     return np.mean([tensorflow.keras.losses.binary_crossentropy(xs[i], ys[i]) for i in range(xs)])
 
 class RCAN:
 
-    def __init__(self):
-        self.dataset_name = "/vol/bitbucket/efb4518/fyp/fyp/generated_imgs_large"
-        self.output_loc = "/vol/bitbucket/efb4518/fyp/fyp/generated_samples"
-        self.kernel_size = 3
-        self.filters = 32
-        # self.img_shape = (472, 472, 3) # from paper
-        self.img_size = 128  # 512
-        self.output_size = 58
+    def __init__(self, config, data_loader):
+        self.dataset_name = "/vol/bitbucket/efb4518/fyp/fyp/generated_imgs_numpy"
+        self.output_loc = "/vol/bitbucket/efb4518/fyp/fyp/generated_samples2"
+        self.kernel_size = config.kernel_size
+        self.filters = config.filters
+        self.img_size = config.img_size 
         self.input_shape = (self.img_size, self.img_size, 3)
-        self.rgb_shape = (self.output_size, self.output_size, 3)
-        self.seg_shape = (self.output_size, self.output_size, 5)
-        self.depth_shape = (self.output_size, self.output_size, 1)
-        self.batch_size = 3 #16
-        # self.patch_sizes = [472, 236, 118]
-        # self.patch_sizes = [512, 256, 128]
-        self.patch_sizes = [128, 64, 32]
+        self.rgb_shape = (self.img_size, self.img_size, 3)
+        self.seg_shape = (self.img_size, self.img_size, 1)
+        self.depth_shape = (self.img_size, self.img_size, 1)
+        self.batch_size = 2 #12
+        self.patch_sizes = [self.img_size, self.img_size//2, self.img_size//4]
         self.patch_weights = [1, 1, 1]
-        self.epochs = 1000  # ??
-        self.g_lr = 0.00002
-        self.d_lr = 0.00002
+        self.epochs = config.epochs  # ??
+        self.g_lr = config.learning_rate
+        self.d_lr = config.learning_rate
         self.pool_size = 2
         self.initialiser_stddev = 0.02
         self.initialiser = initializers.RandomNormal(stddev=self.initialiser_stddev)
 
-        self.sample_interval = 5
+        self.use_seg = config.use_seg
+
+        self.sample_interval = config.sample_interval
         self.model_save_interval = 100
 
         self.g_lr_schedule = optimizers.schedules.ExponentialDecay(
             initial_learning_rate=self.g_lr,
-            decay_steps=30,
-            decay_rate=0.95
+            decay_steps=50,
+            decay_rate=1#decay_rate=0.95
         )
 
         self.d_lr_schedule = optimizers.schedules.ExponentialDecay(
             initial_learning_rate=self.d_lr,
-            decay_steps=30,
-            decay_rate=0.95
+            decay_steps=50,
+            decay_rate=1#decay_rate=0.95
         )
 
         self.opt_G = optimizers.Adam(learning_rate=self.g_lr_schedule, beta_1=0.5)  # OPTIMISER??
         self.opt_D = optimizers.Adam(learning_rate=self.d_lr_schedule, beta_1=0.5)
-        self.data_loader = DataLoader(data_folder=self.dataset_name)
+        self.data_loader = data_loader
 
         self.g = self.define_generator()
         self.d = self.define_discriminator()
@@ -117,44 +107,58 @@ class RCAN:
         d1 = self.conv2d_layer(inp, self.filters, kernel_size=7, avg_pool=False)
         d2 = self.conv2d_layer(d1, self.filters * 2, avg_pool=False, strides=2)
         d3 = self.conv2d_layer(d2, self.filters * 4, avg_pool=False, strides=2)
-        d4 = self.conv2d_layer(d3, self.filters * 8) #, avg_pool=False)
+        d4 = self.conv2d_layer(d3, self.filters * 8)#, avg_pool=False)
         d5 = self.conv2d_layer(d4, self.filters * 16) #, avg_pool=False)
         d6 = self.conv2d_layer(d5, self.filters * 32) #, avg_pool=False)
-        d7 = self.conv2d_layer(d6, self.filters * 32)
+        # d7 = self.conv2d_layer(d6, self.filters * 32)
 
         # d8 = Conv2D(filters=self.filters*32, kernel_size=self.kernel_size, padding='same', activation='relu', kernel_initializer=self.initialiser)(d5)
-        d8 = self.conv2d_layer(d7, self.filters * 32) #, avg_pool=False)
+        d8 = self.conv2d_layer(d6, self.filters * 32, avg_pool=False)
         # b4 = UpSampling2D(size=(2, 2), interpolation='bilinear')(d8)
-        u1 = self.deconv2d_layer(d8, filters1=self.filters * 32, use_skip_input=False) #, use_upsampling=False)
+        u1 = self.deconv2d_layer(d8, filters1=self.filters * 32, use_skip_input=False, use_upsampling=False)
 
         # u2 = self.deconv2d_layer(u1, skip_input=d6, filters1=self.filters * 64, filters2=self.filters * 32)#, use_upsampling=False)
-        u2 = self.deconv2d_layer(u1, skip_input=d7, filters1=self.filters * 64, filters2=self.filters * 32)
-        u3 = self.deconv2d_layer(u2, skip_input=d6, filters1=self.filters * 64, filters2=self.filters * 16)#, use_upsampling=False)
+        # u2 = self.deconv2d_layer(u1, skip_input=d7, filters1=self.filters * 64, filters2=self.filters * 32)
+        u3 = self.deconv2d_layer(u1, skip_input=d6, filters1=self.filters * 64, filters2=self.filters * 16) #, use_upsampling=False)
         u4 = self.deconv2d_layer(u3, skip_input=d5, filters1=self.filters * 32, filters2=self.filters * 8)#, use_upsampling=False)
-        u5 = self.deconv2d_layer(u4, skip_input=d4, filters1=self.filters * 16, filters2=self.filters * 4) #, use_upsampling=False)
+        u5 = self.deconv2d_layer(u4, skip_input=d4, filters1=self.filters * 16, filters2=self.filters * 4)#, use_upsampling=False)
 
         u6 = self.deconv2d_layer(u5, skip_input=d3, filters1=self.filters * 8, filters2=self.filters * 4) #, use_upsampling=False)
         
         u7 = UpSampling2D(size=(2,2), interpolation='bilinear')(u6)
         u8 = self.deconv2d_layer(u7, use_skip_input=False, filters1=self.filters * 4, filters2=self.filters *2, strides2=2)
-        u9 = Conv2D(filters=self.filters * 2, kernel_size=3, strides=1, padding='same', activation='relu')(u8)
+        u9 = Conv2D(filters=self.filters * 2, kernel_size=3, strides=1, padding='same', activation='relu', kernel_initializer=self.initialiser)(u8)
         u10 = InstanceNormalization()(u9)
 
+        u11 = UpSampling2D(size=(2,2), interpolation='bilinear')(u10)
+
+        u12 = Conv2D(filters=self.filters, kernel_size=3, strides=2, padding='same', activation='relu', kernel_initializer=self.initialiser)(u11)
+        u13 = InstanceNormalization()(u12)
+ 
         # u10 = Conv2D(filters=self.filters, kernel_size=3, padding='same')(u9)
         # u11 = InstanceNormalization()(u10)
 
-        rgb_out = Conv2D(filters=3, kernel_size=3, padding='same', activation='tanh', kernel_initializer=self.initialiser)(u10)
+        # TODO: REMOVED TANH ACTIVATION TEMPORARILY
+        # u_rgb = Conv2D(filters=self.filters * 2, kernel_size=3, strides=1, padding='same', activation='relu', kernel_initializer=self.initialiser)(u8)
+        # u_rgb_2 = InstanceNormalization()(u_rgb)
+        rgb_out = Conv2D(filters=3, kernel_size=7, padding='same', activation='tanh', kernel_initializer=self.initialiser)(u13)
 
         # seg_out = Conv2D(filters=5, kernel_size=7, activation='tanh')(u10)
-        #
-        # depth_out = Conv2D(filters=1, kernel_size=7, activation='tanh')(u10)
+        
+        # TODO: REMOVED SIGMOID ACTIVATION TEMPORARILY
+        # u_seg = Conv2D(filters=self.filters * 2, kernel_size=3, strides=1, padding='same', activation='relu', kernel_initializer=self.initialiser)(u8)
+        # u_seg_2 = InstanceNormalization()(u_seg)
+        seg_out = Conv2D(filters=1, kernel_size=7, padding='same', activation='sigmoid', kernel_initializer=self.initialiser)(u13)
 
-        model = Model(inp, rgb_out)  # , seg_out, depth_out])
+
+        if self.use_seg:
+            model = Model(inp, {'fake_rgb': rgb_out, 'fake_seg':seg_out})  # , seg_out, depth_out])
+        else:
+            model = Model(inp, [rgb_out]) # seg_out])  # , seg_out, depth_out])
+
         print(model.summary())
+        
         return model
-
-    def sub_discriminator(self, layer_input):
-        pass
 
     # should be multi-scale patch-based design
     # loss is a sum of discriminator loss with diff patch sizes
@@ -174,52 +178,49 @@ class RCAN:
         d2 = self.conv2d_layer(d1, filters=self.filters, kernel_size=3, avg_pool=False)
         d3 = self.conv2d_layer(d2, filters=self.filters * 2, kernel_size=3, avg_pool=False)
         d4 = self.conv2d_layer(d3, filters=self.filters * 4, kernel_size=3, avg_pool=False)
-        o1 = Conv2D(filters=1, kernel_size=3, padding='same', activation='sigmoid', kernel_initializer=self.initialiser)(d4)  # ??
+        o1 = Conv2D(filters=1, kernel_size=3, padding='same', activation='sigmoid', kernel_initializer=self.initialiser)(d4)
 
         # sub discrim 2
         e1 = self.conv2d_layer(combined_imgs_downsample1, filters=self.filters, kernel_size=3, avg_pool=False)
         e2 = self.conv2d_layer(e1, filters=self.filters, kernel_size=3, avg_pool=False)
         e3 = self.conv2d_layer(e2, filters=self.filters * 2, kernel_size=3, avg_pool=False)
         e4 = self.conv2d_layer(e3, filters=self.filters * 4, kernel_size=3, avg_pool=False)
-        o2 = Conv2D(filters=1, kernel_size=3, padding='same', activation='sigmoid', kernel_initializer=self.initialiser)(e4)  # ??
+        o2 = Conv2D(filters=1, kernel_size=3, padding='same', activation='sigmoid', kernel_initializer=self.initialiser)(e4) 
 
         # sub discrim 3
         f1 = self.conv2d_layer(combined_imgs_downsample2, filters=self.filters, kernel_size=3, avg_pool=False)
         f2 = self.conv2d_layer(f1, filters=self.filters, kernel_size=3, avg_pool=False)
         f3 = self.conv2d_layer(f2, filters=self.filters * 2, kernel_size=3, avg_pool=False)
         f4 = self.conv2d_layer(f3, filters=self.filters * 4, kernel_size=3, avg_pool=False)
-        o3 = Conv2D(filters=1, kernel_size=3, padding='same', activation='sigmoid', kernel_initializer=self.initialiser)(f4)  # ??
+        o3 = Conv2D(filters=1, kernel_size=3, padding='same', activation='sigmoid', kernel_initializer=self.initialiser)(f4) 
 
-        # o1 = sub_descrim(combined_imgs)
-        # o2 = sub_descrim(combined_imgs_downsample1)
-        # o3 = sub_descrim(combined_imgs_downsample2)
-
-        model = Model([img_A, cond_img], [o1, o2, o3])
+        model = Model(inputs=[img_A, cond_img], outputs=[o1, o2, o3])
 
         print(model.summary())
 
-        model.compile(loss='binary_crossentropy', optimizer=self.opt_D)  # , metrics=['accuracy'])
+        model.compile(loss='binary_crossentropy', optimizer=self.opt_D) 
 
         return model
 
     def define_gan(self):
         img_A = Input(shape=self.input_shape)
-        # img_A_cropped = Input(shape=self.rgb_shape)
-        target_RGB = Input(shape=self.input_shape)
-        # target_seg = Input(shape=self.seg_shape)
-        # target_depth = Input(shape=self.depth_shape)
 
-        fake_RGB = self.g(img_A)
+        fake_imgs = self.g(img_A)
 
         self.d.trainable = False
 
-        print("RGB shape: ", fake_RGB.shape)
-        print("img a shape: ", img_A.shape)
+        valids = self.d([fake_imgs['fake_rgb'], img_A])
 
-        valids = self.d([fake_RGB, img_A])
+        print("shapes: ", fake_imgs.keys())
 
         # should create valid output and recreate A
-        gan = Model(inputs=[img_A, target_RGB], outputs=[valids, fake_RGB])
+        if self.use_seg: 
+            gan = Model(inputs=img_A, outputs={"valids_0": valids[0], "valids_1":valids[1], "valids_2":valids[2], "fake_rgb":fake_imgs['fake_rgb'], "fake_seg":fake_imgs['fake_seg']})
+        else:
+            gan = Model(inputs=img_A, outputs={"valids_0": valids[0], "valids_1":valids[1], "valids_2":valids[2], "fake_rgb":fake_imgs['fake_rgb']}) #, fake_segmap])
+
+        print("VALIDS SHAPE: ", np.array(valids).shape)
+        
 
         # INCLUDE
         # visual equality between generated xa and target xc
@@ -228,8 +229,10 @@ class RCAN:
         # use MPSE with l2 for semantic and depth auxiliary losses
         # plus sigmoid cross-entropy gan loss
         # instead of mse, should be compat.v1.losses.mean_pairwise_squared_error
-
-        gan.compile(loss=['binary_crossentropy', 'mse'], loss_weights=[1, 1], optimizer=self.opt_G)
+        if self.use_seg:
+            gan.compile(loss={"valids_0":'binary_crossentropy', "valids_1":'binary_crossentropy', 'valids_2':'binary_crossentropy', 'fake_rgb':'mse', 'fake_seg':'mse'}, loss_weights={"valids_0":0,"valids_1":0,"valids_2":0,'fake_rgb':1,'fake_seg':0}, optimizer=self.opt_G)
+        else:
+            gan.compile(loss=['binary_crossentropy', 'binary_crossentropy', 'binary_crossentropy', 'mse'], loss_weights=[1,1,1,10], optimizer=self.opt_G)
         return gan
 
     def train(self):
@@ -244,24 +247,26 @@ class RCAN:
         # fake_patch_outputs = [np.full((self.batch_size,) + (disc_patch, disc_patch, 1), 0.1) for disc_patch in
         #                       self.patch_sizes]
 
-        print("training")
 
         for epoch in range(self.epochs):
-            for batch_i, (target_img, randomised_img) in enumerate(self.data_loader.load_batch(self.batch_size)):
+            for batch_i, (target_img, randomised_img, _, target_segmap) in enumerate(self.data_loader.load_batch(self.batch_size)):
                 # train discriminator
 
-                fake_A = self.g.predict(randomised_img)
+                fake_imgs = self.g.predict(randomised_img)
 
-                print("ERROR: ", np.sum(np.abs(np.subtract(target_img, fake_A))))
+                print("ERROR: ", np.sum(np.abs(np.subtract(target_img, fake_imgs['fake_rgb']))))
 
                 d_loss_real = self.d.train_on_batch([target_img, randomised_img], valid_patch_outputs)
 
-                d_loss_fake = self.d.train_on_batch([fake_A, randomised_img], fake_patch_outputs)
+                d_loss_fake = self.d.train_on_batch([fake_imgs['fake_rgb'], randomised_img], fake_patch_outputs)
 
                 d_loss = 0.5 * np.add(d_loss_real, d_loss_fake)
 
                 # train generator
-                g_loss = self.gan.train_on_batch([randomised_img, target_img], [valid_patch_outputs, target_img])
+                if self.use_seg:
+                    g_loss = self.gan.train_on_batch(randomised_img, {'valids_0':valid_patch_outputs[0], 'valids_1':valid_patch_outputs[1], 'valids_2':valid_patch_outputs[2], 'fake_rgb':target_img, 'fake_seg':target_segmap})
+                else:
+                    g_loss = self.gan.train_on_batch(randomised_img, [valid_patch_outputs[0], valid_patch_outputs[1], valid_patch_outputs[2], target_img]) #, target_segmap])
 
                 print("GAN LOSS: ", g_loss)
                 print("DIM LOSS: ", d_loss)
@@ -280,39 +285,60 @@ class RCAN:
                 print("LEARNIGN RATE: ", self.opt_G._decayed_lr('float32'))
 
                 if batch_i % self.sample_interval == 0:
-                    self.sample_images(epoch, batch_i)
+                    if self.use_seg:
+                        self.sample_images(epoch, batch_i, randomised_img[:4], target_img[:4], fake_imgs['fake_rgb'][:4], target_segmap[:4], fake_imgs['fake_seg'][:4])
+                    else:
+                        self.sample_images(epoch, batch_i, randomised_img[:4], target_img[:4], fake_imgs['fake_rgb'][:4])
                 if epoch % self.model_save_interval == 0 and batch_i == 0:
                     self.g.save("models/model%d_%d" % (epoch, batch_i))
 
-    def sample_images(self, epoch, batch_i):
+    def sample_images(self, epoch, batch_i, randomised_imgs, target_imgs, fake_imgs, target_segmaps=[], fake_segs=[]):
         # print("saving figs")
         os.makedirs('%s' % (self.output_loc), exist_ok=True)
-        r, c = 3, 3
+        r, c = 3, 4
 
-        imgs_A, imgs_B = self.data_loader.load_data(batch_size=3)
-        fake_A = self.g.predict(imgs_B)
+        # target_img, randomised_img, _, target_segmap = self.data_loader.load_data(batch_size=4)
+        # fake_A = self.g.predict(randomised_img)
 
-        gen_imgs = np.concatenate([imgs_B, fake_A, imgs_A])
+        # print("\nTARGET IMG: ", target_imgs[0])
+        # print("\nFAKE IMG: ", fake_imgs[0])
 
-        # print(fake_A)
+        fake_seg = np.repeat(fake_segs, 3, axis=-1) # -0.5) * 2 # TODO: why is this darker?? removed the 0.5 for now but not good solution!!
+        target_segmap = (np.repeat(target_segmaps, 3, axis=-1) - 0.5) * 2
+
+        gen_imgs = np.concatenate([randomised_imgs, fake_imgs, target_imgs])
+
+        seg_imgs = np.concatenate([randomised_imgs, fake_seg, target_segmap])
 
         # Rescale images 0 - 1
         gen_imgs = 0.5 * gen_imgs + 0.5
+        seg_imgs = 0.5 * seg_imgs + 0.5
 
         titles = ['Condition', 'Generated', 'Original']
         fig, axs = plt.subplots(r, c)
         cnt = 0
+
         for i in range(r):
-            for j in range(c):
-                axs[i, j].imshow(gen_imgs[cnt])
-                axs[i, j].set_title(titles[i])
-                axs[i, j].axis('off')
-                cnt += 1
+            # for j in range(c):
+            axs[i, 0].imshow(gen_imgs[cnt])
+            axs[i, 0].set_title(titles[i])
+            axs[i, 0].axis('off')
+
+            axs[i, 1].imshow(seg_imgs[cnt])
+            axs[i, 1].set_title(titles[i])
+            axs[i, 1].axis('off')
+            cnt+=1
+
+            axs[i, 2].imshow(seg_imgs[cnt])
+            axs[i, 2].set_title(titles[i])
+            axs[i, 2].axis('off')
+
+            axs[i, 3].imshow(gen_imgs[cnt])
+            axs[i, 3].set_title(titles[i])
+            axs[i, 3].axis('off')
+            cnt += 1
+
         fig.savefig("%s/%d_%d.png" % (self.output_loc, epoch, batch_i))
         plt.show()
         plt.close()
 
-
-if __name__ == '__main__':
-    rcan = RCAN()
-    rcan.train()
