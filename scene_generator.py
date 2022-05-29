@@ -16,8 +16,8 @@ class CanonicalParams:
     def __init__(self):
         self.ambient_light = 5  # 1000
         self.camera_distance = 2
-        self.img_width = 64
-        self.img_height = 64
+        self.img_width = 128
+        self.img_height = 128
 
 
 class RandomisationParams:
@@ -28,7 +28,7 @@ class RandomisationParams:
         self.max_spot_light = 200
         self.min_spot_distance = 1
         self.max_spot_distance = 3
-        self.min_camera_distance = 1
+        self.min_camera_distance = 1.2
         self.max_camera_distance = 2
         self.camera_perturbation_sd = 0.05  # 0.05
         self.no_randomisations = 5
@@ -38,10 +38,15 @@ class Scene:
     def __init__(self, canonical_params, randomisation_params, output_folder):
         self.c_params = canonical_params
         self.r_params = randomisation_params
-        self.images = glob.glob("textures/textures/obj_textures/*.png")
+        self.images = glob.glob("textures/obj_textures/*.png")
+        #print("IMAGES: ", self.images)
         self.orange_mat = glob.glob("blender_objects/orange_texture.png")[0]
         self.blue_mat = glob.glob("blender_objects/blue_texture.png")[0]
         self.output_folder = output_folder
+        self.start_img = 4575
+        #self.textures = [bproc.loader.load_texture(img) for img in self.images]
+        self.face_centres = []
+        self.save_arrs_interval = 100
 
     def load_obj(self, obj_name, pos, rot, from_file=False):
         if from_file:
@@ -71,7 +76,29 @@ class Scene:
             # print(rotation_matrix)
 
         cam_pose = bproc.math.build_transformation_mat(loc, rotation_matrix)
-        return cam_pose
+        return cam_pose, rotation_matrix
+
+    # def angle_between_points(self, point_a, point_b):
+    #     unit_vec_a = point_a/np.linalg.norm(point_a)
+    #     unit_vec_b = point_b/np.linalg.norm(point_b)
+
+    #     v = np.cross(unit_vec_a, unit_vec_b)
+    #     c = np.dot(unit_vec_a, unit_vec_b)
+    #     s = np.linalg.norm(v)
+    #     kmat = np.array([[0, -v[2], v[1]], [v[2], 0, -v[0]], [-v[1], v[0], 0]])
+    #     rotation_matrix = np.eye(3) + kmat + kmat.dot(kmat) * ((1 - c) / (s ** 2))
+
+        # return rotation_matrix
+
+    def generate_data(self, end,start,start_orient, end_orient):
+        distance=  end-start
+        # rotation_matrix = bproc.camera.rotation_from_forward_vec(distance)
+        print(start_orient)
+        rotation_matrix = np.matmul(np.linalg.inv(start_orient), end_orient)
+
+        # rotation_matrix = self.angle_between_points([1,1,1], -cam_loc)
+        # transformation_mat = bproc.math.build_transformation_mat(translation=(distance), rotation=rotation_matrix)
+        return distance,rotation_matrix, self.rot2eul(rotation_matrix)
 
     def output_file(self, data, folder, i, j):
         # Write the rendering into an hdf5 file
@@ -85,20 +112,22 @@ class Scene:
 
         if data.__contains__("depth"):
             arr_depth = np.array(data.get("depth")).reshape((self.c_params.img_width, self.c_params.img_height))
-            arr_depth /= np.max(arr_depth)
+            # arr_depth /= np.max(arr_depth)
 
-            # np.save("output/depths/depth_%d.npy" % i, arr_depth)
-            print("DEPTH: ", arr_depth.shape)
-            plt.imsave("%s/depths/depth_%d.png" % (self.output_folder, i), arr_depth, cmap="turbo")
+            np.save("%s/depth/depth_%d.npy" % (self.output_folder, i), arr_depth)
+            # print("DEPTH: ", arr_depth.shape)
+            # plt.imsave("%s/depths/depth_%d.png" % (self.output_folder, i), arr_depth, cmap="turbo")
             # im = Image.fromarray(np.uint8(cm._colormaps(arr_colours) * 255))
             # im.save("output/depths/depth_%d.png" % i, arr_depth)
 
         if data.__contains__("instance_segmaps"):
             arr_seg = np.array(data.get("instance_segmaps"), dtype=np.float64).reshape(
                 (self.c_params.img_width, self.c_params.img_height))
-            arr_seg /= np.max(arr_seg)
-            plt.imsave("%s/segmaps/segmap_%d.png" % (self.output_folder, i), arr_seg, cmap="turbo")
-            # np.save("output/segmaps/segmap_%d.npy" % i, arr_seg)
+            
+            # print(arr_seg)
+            # arr_seg /= np.max(arr_seg)
+            # plt.imsave("%s/segmaps/segmap_%d.png" % (self.output_folder, i), arr_seg, cmap="turbo")
+            np.save("%s/segmap/segmap_%d.npy" % (self.output_folder, i), arr_seg)
 
     # def generate_random_pos(self, height, min, max):
     #     return [np.random.randint(min, max), height, np.random.randint(min, max)]
@@ -121,19 +150,20 @@ class Scene:
         return bproc.sampler.shell(center, radius_min=radmin, radius_max=radmax, elevation_min=elevation_min,
                                    azimuth_min=azimuth_min, azimuth_max=azimuth_max)
 
-    def generate_pos_bb_visible(self, center, radmin, radmax, azmax_angle, bb, obj, max_samples=10, randomise=True):
+    def generate_pos_bb_visible(self, center, radmin, radmax, azmax_angle, bb, obj, max_samples=40, randomise=True):
         point = self.generate_pos_distance_from_point(center, radmin, radmax, azmax_angle)
-        cam_pose = self.set_camera(point, center, randomise=randomise)
+        cam_pose, rotation = self.set_camera(point, center, randomise=randomise)
         i = 0
-        while not self.check_if_bb_in_view(bb, cam_pose):
+        while not self.check_if_bb_in_view(obj, cam_pose):
             point = self.generate_pos_distance_from_point(center, radmin, radmax, azmax_angle)
-            cam_pose = self.set_camera(point, center, randomise=randomise)
+            cam_pose, rotation = self.set_camera(point, center, randomise=randomise)
             i += 1
 
             # return non-randomised point
             if i > max_samples:
-                return self.set_camera(point, center, randomise=False), False
-        return cam_pose, True
+                cam_pose, rotation = self.set_camera(point, center, randomise=False)
+                return cam_pose, False, point, rotation
+        return cam_pose, True, point, rotation
 
     def randomise_material(self, obj):
         # Find all materials
@@ -157,20 +187,45 @@ class Scene:
             obj.clear_materials()
             obj.add_material(new_mat)
 
-    def check_if_bb_in_view(self, bb, cam_pose):
-        points = []
-        for point in bb:
-            p = bproc.object.create_primitive("SPHERE")
-            p.set_scale((0.5, 0.5, 0.5))
-            p.set_location(point)
-            points.append(p)
+    def get_face_centres(self, obj):
+        face_centres = []
+        centre = obj.get_location()
+        size = abs(obj.get_bound_box()[0,0])
+        for xyz in range(3):
+            for negpos in [-1, 1]:
+                face_centre = centre.copy()
+                face_centre[xyz] += negpos * size
+                face_centres.append(face_centre)
+        return face_centres
 
-        vis_objects = bproc.camera.visible_objects(cam_pose, sqrt_number_of_rays=100)
+    def check_if_bb_in_view(self, obj, cam_pose):
+        points_list = []
+
+        for face_no in range(len(self.face_centres)):
+            p = bproc.object.create_primitive("PLANE")
+            p.set_scale((0.03, 0.03, 0.03))
+
+            if face_no in [0, 1]:
+                p.set_rotation_euler([0,np.pi/2,0])
+            elif face_no in [2, 3]:
+                p.set_rotation_euler([np.pi/2,0,0])
+
+            p.set_location(self.face_centres[face_no])
+            points_list.append(p)
+        
+        # for face in range(6):
+        #     face_centre = centre + 
+        #     p = bproc.object.create_primitive("SPHERE")
+        #     p.set_scale((0.01, 0.01, 0.01))
+        #     p.set_location(point)
+        #     points.append(p)
+
+        vis_objects = bproc.camera.visible_objects(cam_pose, sqrt_number_of_rays=50)
         # print("vis objs: ", vis_objects)
-        objs_vis = vis_objects.intersection(points)
+        objs_vis = vis_objects.intersection(points_list)
         print("len objs vis: ", len(objs_vis))
-        bproc.object.delete_multiple(points)
-        return len(objs_vis) >= 6
+        bproc.object.delete_multiple(points_list)
+        return len(objs_vis) >= 3
 
     # def generate_checkerboard(self):
     #     # a4_size = (2.97, 2.10)
@@ -246,16 +301,16 @@ class Scene:
         # box.set_scale((2, 2, 2))
 
         box.set_scale((0.2, 0.2, 0.2))
-        print("box bb before: ", box.get_bound_box()[0][2])
+        #print("box bb before: ", box.get_bound_box()[0][2])
         box.set_location([0, 0, 0])
 
-        print("local to world mat ", box.get_origin())
+        #print("local to world mat ", box.get_origin())
 
 
-        print("box bb: ", box.get_bound_box())
+        #print("box bb: ", box.get_bound_box())
         ceiling, _ = self.load_obj("PLANE", [0, 0, 40], [0, 0, 0])
         ceiling.set_scale((20, 20, 1))
-        print("plane bb: ", ceiling.get_bound_box())
+        #print("plane bb: ", ceiling.get_bound_box())
         bproc.lighting.light_surface([ceiling], emission_strength=self.c_params.ambient_light)
 
         return ceiling, box
@@ -271,37 +326,88 @@ class Scene:
                                     np.random.uniform(self.r_params.min_spot_light, self.r_params.max_spot_light))
         return light
 
-    def render_scene(self, no_images):
-        bproc.camera.set_intrinsics_from_blender_params(image_height=self.c_params.img_height,
-                                                        image_width=self.c_params.img_width)
+    def rot2eul(self, R):
+        beta = -np.arcsin(R[2,0])
+        alpha = np.arctan2(R[2,1]/np.cos(beta),R[2,2]/np.cos(beta))
+        gamma = np.arctan2(R[1,0]/np.cos(beta),R[0,0]/np.cos(beta))
+        return np.array((alpha, beta, gamma))
 
-        bproc.renderer.enable_depth_output(activate_antialiasing=True)
-        # bproc.renderer.set_output_format("PNG")
+    def get_keypoints(self, cam_loc, cam_rot, bb):
+        keypoints = np.empty((len(bb), 3))
+        for i, point in enumerate(bb):
+            distance, _, _ = self.generate_data(end=point, start=cam_loc, start_orient=np.eye(3), end_orient=cam_rot)
+            keypoints[i] = distance
+        return keypoints
 
+    def setup_scene(self, blue_mat = None, orange_mat = None):
         # load canonical scene
         cube, poi = self.load_obj("CUBE", [0, 0, 0.1], [0, 0, 0])
         cube.add_uv_mapping("cube", overwrite=True)
         cube.set_scale((0.1, 0.1, 0.1))
         cube.clear_materials()
 
+        self.face_centres = self.get_face_centres(cube)
+
         print("CUBE BB: ", cube.get_bound_box())
 
         ceiling, box = self.generate_environment()
 
-        orange_mat = bproc.material.create("orange_mat")
-        orange_texture = bproc.loader.load_texture(self.orange_mat)
-        orange_mat.infuse_texture(orange_texture[0], mode='set', texture_scale=1)
+        if orange_mat == None:
+            orange_mat = bproc.material.create("orange_mat")
+            orange_texture = bproc.loader.load_texture(self.orange_mat)
+            orange_mat.infuse_texture(orange_texture[0], mode='set', texture_scale=1)
         cube.add_material(orange_mat)
 
-        blue_mat = bproc.material.create("blue_mat")
-        blue_texture = bproc.loader.load_texture(self.blue_mat)
-        blue_mat.infuse_texture(blue_texture[0], mode='set', texture_scale=1)
+        if blue_mat == None:
+            blue_mat = bproc.material.create("blue_mat")
+            blue_texture = bproc.loader.load_texture(self.blue_mat)
+            blue_mat.infuse_texture(blue_texture[0], mode='set', texture_scale=1)
 
-        for i in range(no_images):
+        return cube, poi, ceiling, box, blue_mat, orange_mat
+
+    def render_scene(self, no_images):
+        # bproc.renderer.enable_depth_output(activate_antialiasing=True)
+        bproc.camera.set_intrinsics_from_blender_params(image_height=self.c_params.img_height,
+                                                        image_width=self.c_params.img_width)
+
+
+        print("here")
+        # bproc.renderer.set_output_format("PNG")
+
+        cube, poi, ceiling, box, blue_mat, orange_mat = self.setup_scene()
+
+        print("set textures")
+
+        try:
+            distances_arr = np.load("%s/pose_info/distances.npy" % self.output_folder)
+        except:
+            distances_arr = np.empty((no_images, 3))
+        try:
+            rotations_arr = np.load("%s/pose_info/rotations.npy" % self.output_folder)
+        except:
+            rotations_arr = np.empty((no_images, 3, 3))
+        try:
+            euler_angles_arr = np.load("%s/pose_info/euler_angles.npy" % self.output_folder)
+        except:
+            euler_angles_arr = np.empty((no_images, 3))
+        try:
+            keypoints_arr = np.load("%s/pose_info/keypoints.npy" % self.output_folder)
+        except:
+            keypoints_arr = np.empty((no_images, 3))
+
+        # distances_arr = np.empty((no_images, 3))
+        # rotations_arr = np.empty((no_images, 3, 3))
+        # euler_angles_arr = np.empty((no_images, 3))
+
+
+        for i in range(self.start_img, no_images):
+
+            print("\n====================\n\n          %d\n\n==================\n" % i )
+
             # 100= random number chosen to ensure no overlap when mutliple materials have to
             # be generated
-            os.environ["BLENDER_PROC_RANDOM_SEED"] = str(i*self.r_params.no_randomisations*100)
-            np.random.seed(i*self.r_params.no_randomisations*100)
+            os.environ["BLENDER_PROC_RANDOM_SEED"] = str(i*self.r_params.no_randomisations)
+            np.random.seed(i*self.r_params.no_randomisations)
 
             bproc.utility.reset_keyframes()
 
@@ -309,15 +415,48 @@ class Scene:
             box.add_material(blue_mat)
             bproc.lighting.light_surface([ceiling], emission_strength=self.c_params.ambient_light)
 
-            cam_pose, visible = self.generate_pos_bb_visible(poi, self.r_params.min_camera_distance,
+            cam_pose, visible, cam_loc, cam_rot = self.generate_pos_bb_visible(poi, self.r_params.min_camera_distance,
                                                              self.r_params.max_camera_distance, 90,
                                                              bb=cube.get_bound_box(), obj=cube)
 
+
             if not visible:
+                i -= 1
                 continue
 
-            bproc.camera.add_camera_pose(cam_pose)
+            
+            camera_rot = bproc.camera.rotation_from_forward_vec(poi-cam_loc)
+            # distance2,rotation_matrix2, euler_angles2 = self.generate_data(end=cam_loc, start=poi, start_orient=camera_rot, end_orient=np.eye(3))
+            distance, rotation_matrix, euler_angles = self.generate_data(end=poi, start=cam_loc, start_orient=np.eye(3), end_orient=camera_rot)
+            keypoints = self.get_keypoints(cam_loc, camera_rot, cube.get_bound_box)
+            
+            # print("\ndistance: ", distance, "\nrotation mat: ", rotation_matrix, "\neuler angles: ", euler_angles)
 
+            # monkey = bproc.object.create_primitive("MONKEY")
+            # monkey.set_location(poi)
+            # monkey.set_scale([0.2,0.2,0.2])
+
+            # monkey.set_location(monkey.get_location()+distance2)
+            # monkey.apply_T(bproc.math.build_transformation_mat(translation=[0,0,0], rotation=euler_angles2))
+            # monkey.set_location(monkey.get_location()+distance)
+            # monkey.apply_T(bproc.math.build_transformation_mat(translation=[0,0,0], rotation=euler_angles))
+
+            bproc.camera.add_camera_pose(cam_pose)
+            print("CAMERA FOV: ", bproc.camera.get_fov())
+            print("distance: ", distance)
+
+            distances_arr[i] = (distance)
+            rotations_arr[i] = rotation_matrix
+            euler_angles_arr[i] = (euler_angles)
+            keypoints_arr[i] = keypoints
+            # fovs_arr[i] = bproc.camera.get_fov()
+
+
+            # print("\n\nCUBE ROT: "  , cube.get_local2world_mat())
+            # print("\n\nCAMERA ROT: ", bproc.camera.get_camera_pose())
+            # print("Distance: ", distance)
+            # print("distance2: ", distance2)
+            
             # Render the scene
             bproc.renderer.set_max_amount_of_samples(30)
             data = bproc.renderer.render()
@@ -325,7 +464,7 @@ class Scene:
 
             self.output_file(data, "canonical", i, 0)
 
-            for j in range(randomisation_params.no_randomisations):
+            for j in range(self.randomisation_params.no_randomisations):
 
                 bproc.utility.reset_keyframes()
 
@@ -341,14 +480,20 @@ class Scene:
 
                 light.delete()
 
+            if i % self.save_arrs_interval == 0:
+                np.save("%s/pose_info/distances.npy" % self.output_folder, distances_arr)
+                np.save("%s/pose_info/rotations.npy" % self.output_folder, rotations_arr)
+                np.save("%s/pose_info/euler_angles.npy" % self.output_folder, euler_angles_arr)
+                np.save("%s/pose_info/keypoints.npy" % self.output_folder, keypoints_arr)
+                # np.save("/vol/bitbucket/efb4518/fyp/fyp/generated_imgs_numpy/pose_info/fovs.npy", fovs_arr)
+
 
 # apriltag
-canonical_params = CanonicalParams()
-randomisation_params = RandomisationParams()
+# canonical_params = CanonicalParams()
+# randomisation_params = RandomisationParams()
 
-scene = Scene(canonical_params, randomisation_params, "generated_imgs")
-scene.render_scene(no_images=10000)
-# scene.generate_env_with_checkerboard()
+# scene = Scene(canonical_params, randomisation_params, "/vol/bitbucket/efb4518/fyp/fyp/generated_imgs_numpy")
+# scene.render_scene(no_images=10000)
+# # scene.generate_env_with_checkerboard()
 
-# TODO: use seeds for each scene - check if it works????
-# TODO: store poses
+# # TODO: cubes too close!! :(( (cos of check_bb_in_view)
