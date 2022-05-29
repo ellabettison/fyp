@@ -6,8 +6,10 @@ import numpy as np
 from PIL import Image
 import tensorflow as tf
 
+from tensorflow.keras.utils import Sequence
 
-class DataLoader(tf.keras.utils.Sequence):
+
+class DataLoader(Sequence):
     def __init__(self, config, data_to_use="pose_info/distances.npy"):
         self.n_batches = 1
         self.data_folder = config.dataset_name
@@ -125,6 +127,8 @@ class DataLoader(tf.keras.utils.Sequence):
             img_depths = np.array(img_depths)/np.max(img_depths)# * 2 -1
             img_segmaps = np.array(img_segmaps)/np.max(img_segmaps)
 
+            print("taget")
+
             yield imgs_target, imgs_randomised, img_depths, img_segmaps
 
     def imread(self, path):
@@ -162,7 +166,13 @@ class DataLoader(tf.keras.utils.Sequence):
 
             imgs_A = np.array(imgs_A)/ 127.5 - 1.
 
-            yield imgs_A, tf.convert_to_tensor(target_coords, dtype=tf.float32)
+            # print("IMGS A")
+            # print(np.array(imgs_A).shape)
+            # print("target coords")
+            # print(np.array(target_coords).shape)
+
+            return np.array(imgs_A), np.array(target_coords)
+            # return np.array([0,0,0])
 
     def __len__(self):
         return int(self.dataset_size / self.batch_size)
