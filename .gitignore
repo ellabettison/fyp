@@ -1,0 +1,11 @@
+*.out
+*.sh
+generated_imgs*
+__pycache__/
+datasets/
+img_to_label_test/
+textures/
+venv/
+models/
+.idea/
+vol/
