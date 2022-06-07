@@ -12,11 +12,15 @@ from tensorflow.keras.layers import Concatenate
 
 
 class DataLoader(Sequence):
-    def __init__(self, config, data_to_use="pose_info/distances.npy"):
+    def __init__(self, config, data_to_use="pose_info/distances.npy", start=0, end=None):
         self.n_batches = 1
         self.data_folder = config.dataset_name
         self.img_res = (config.img_size, config.img_size)
-        self.dataset_size = config.dataset_size #4500 #2338 #3
+        self.start_img = start
+        if end==None:
+            self.dataset_size = config.dataset_size #4500 #2338 #3
+        else:
+            self.dataset_size = end
         self.randomisations = config.randomisations #5
         self.data_to_use = data_to_use
         self.img_to_gen = "canonical"
@@ -27,9 +31,10 @@ class DataLoader(Sequence):
         self.segmap_file = "segmap"
         self.batch_size=config.batch_size
 
+        self.use_rand = config.use_rand
         self.use_canon = config.use_canon
         self.use_depth = config.use_depth
-        self.use_segmap = config.use_segmap
+        self.use_seg = config.use_seg
 
     def load_data(self, batch_size=1):
         img_nums = np.random.randint(self.dataset_size, size=batch_size)
@@ -144,7 +149,7 @@ class DataLoader(Sequence):
         self.n_batches = int(self.dataset_size / self.batch_size)
 
         for _ in range(self.n_batches - 1):
-            img_nums = np.random.randint(self.dataset_size, size=self.batch_size)
+            img_nums = np.random.randint(low=self.start_img, high=self.dataset_size, size=self.batch_size)
 
             imgs_A = []
             target_coords = []
@@ -165,19 +170,26 @@ class DataLoader(Sequence):
 
                 inputs_to_use = []
 
+                if self.use_rand:
+                    img_path_randomised = glob('%s/randomised/%s/randomised_%s.png' % (
+                    self.data_folder, np.random.randint(0, self.randomisations), img_nums[j]))
+                    img_randomised = self.imread(img_path_randomised[0])
+                    img_randomised = np.array(Image.fromarray(img_randomised).resize(self.img_res))
+                    img_randomised = np.array(img_randomised)/ 127.5 - 1.
+                    inputs_to_use.append(img_randomised)
                 if self.use_canon:
                     img_target = self.imread(img_path_target[0])
                     img_target = np.array(Image.fromarray(img_target).resize(self.img_res))
                     img_target = np.array(img_target)/ 127.5 - 1.
                     inputs_to_use.append(img_target)
                 if self.use_seg:
-                    segmap_file = np.load(glob("%s/%s/%s_%s.npy" % (self.data_folder, self.segmap_file, self.segmap_file, img_nums[j][0]))[0])
+                    segmap_file = np.load(glob("%s/%s/%s_%s.npy" % (self.data_folder, self.segmap_file, self.segmap_file, img_nums[j]))[0])
                     segmap = np.array(Image.fromarray(segmap_file).resize(self.img_res)).reshape(self.img_res[0], self.img_res[1], 1)
                     segmap = np.array(segmap)/np.max(segmap)
                     inputs_to_use.append(segmap)
                 if self.use_depth:
-                    depth_file = np.load(glob("%s/%s/%s_%s.npy" % (self.data_folder, self.depth_file, self.depth_file, img_nums[j][0]))[0])
-                    depth = np.array(Image.fromarray(depth_file).resize(self.img_res)).reshape(self.d[0], self.img_res[1], 1)
+                    depth_file = np.load(glob("%s/%s/%s_%s.npy" % (self.data_folder, self.depth_file, self.depth_file, img_nums[j]))[0])
+                    depth = np.array(Image.fromarray(depth_file).resize(self.img_res)).reshape(self.img_res[0], self.img_res[1], 1)
                     depth = np.array(depth)/np.max(depth)
                     inputs_to_use.append(depth)
 
