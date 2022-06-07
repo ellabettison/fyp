@@ -1,5 +1,6 @@
 
 import blenderproc as bproc
+from matplotlib import rc_params
 import numpy as np
 import glob
 import os
@@ -13,44 +14,45 @@ from scipy import rand
 bproc.init()
 
 
-class CanonicalParams:
-    def __init__(self):
-        self.ambient_light = 5  # 1000
-        self.camera_distance = 2
-        self.img_width = 128
-        self.img_height = 128
+# class CanonicalParams:
+#     def __init__(self):
+#         self.ambient_light = 5  # 1000
+#         self.camera_distance = 2
+#         self.img_width = 128
+#         self.img_height = 128
 
 
-class RandomisationParams:
-    def __init__(self):
-        self.min_ambient_light = 0.5
-        self.max_ambient_light = 5
-        self.min_spot_light = 0
-        self.max_spot_light = 200
-        self.min_spot_distance = 1
-        self.max_spot_distance = 3
-        self.min_camera_distance = 1.2
-        self.max_camera_distance = 2
-        self.camera_perturbation_sd = 0.05  # 0.05
-        self.no_randomisations = 1
-        self.distractor_objects_radius = 2
-        self.obj_size_range = 0.2
-        self.min_obj_size = 0.05
+# class RandomisationParams:
+#     def __init__(self):
+#         self.min_ambient_light = 0.5
+#         self.max_ambient_light = 5
+#         self.min_spot_light = 0
+#         self.max_spot_light = 200
+#         self.min_spot_distance = 1
+#         self.max_spot_distance = 3
+#         self.min_camera_distance = 1.2
+#         self.max_camera_distance = 2
+#         self.camera_perturbation_sd = 0.05  # 0.05
+#         self.no_randomisations = 1
+#         self.distractor_objects_radius = 2
+#         self.obj_size_range = 0.2
+#         self.min_obj_size = 0.05
 
 
 class Scene:
-    def __init__(self, canonical_params, randomisation_params, output_folder):
+    def __init__(self, canonical_params, randomisation_params, config):
         self.c_params = canonical_params
         self.r_params = randomisation_params
         self.images = glob.glob("textures/obj_textures/*.png")
         #print("IMAGES: ", self.images)
         self.orange_mat = glob.glob("blender_objects/orange_texture.png")[0]
         self.blue_mat = glob.glob("blender_objects/blue_texture.png")[0]
-        self.output_folder = output_folder
+        self.output_folder = config.output_folder
         self.start_img = 1 #4575
         #self.textures = [bproc.loader.load_texture(img) for img in self.images]
         self.face_centres = []
         self.save_arrs_interval = 100
+        self.rand_objs_to_gen = config.rand_objs_to_gen
 
     def load_obj(self, obj_name, pos, rot, from_file=False):
         if from_file:
@@ -319,7 +321,7 @@ class Scene:
 
         return ceiling, box
 
-    def randomise_env(self, ceiling, box, poi):
+    def randomise_env(self, ceiling, box, poi, rand_objs):
         # randomise scene
         bproc.lighting.light_surface([ceiling], emission_strength=np.random.uniform(self.r_params.min_ambient_light,
                                                                                     self.r_params.max_ambient_light))
@@ -328,6 +330,9 @@ class Scene:
         light = self.set_spot_light(self.generate_pos_distance_from_point(poi, self.r_params.min_spot_distance,
                                                                           self.r_params.max_spot_distance, 360),
                                     np.random.uniform(self.r_params.min_spot_light, self.r_params.max_spot_light))
+
+        for obj in rand_objs:
+            self.randomise_material(obj)
         
         return light
 
@@ -399,7 +404,7 @@ class Scene:
         return cube, poi, ceiling, box, blue_mat, orange_mat
 
     def render_scene(self, no_images):
-        # bproc.renderer.enable_depth_output(activate_antialiasing=True)
+        bproc.renderer.enable_depth_output(activate_antialiasing=True)
         bproc.camera.set_intrinsics_from_blender_params(image_height=self.c_params.img_height,
                                                         image_width=self.c_params.img_width)
 
@@ -451,11 +456,12 @@ class Scene:
             rand_objs = []
             obj_locs = [[0,0,0]]
             obj_widths = [0.1]
-            for _ in range(10):
+            for _ in range(self.rand_objs_to_gen):
                 rand_obj, obj_loc, obj_width = self.add_random_object(obj_locs, obj_widths)
                 rand_objs.append(rand_obj)
                 obj_locs.append(obj_loc)
                 obj_widths.append(obj_width)
+
 
             cam_pose, visible, cam_loc, cam_rot = self.generate_pos_bb_visible(poi, self.r_params.min_camera_distance,
                                                              self.r_params.max_camera_distance, 90,
@@ -463,7 +469,11 @@ class Scene:
 
             if not visible:
                 i -= 1
+                bproc.object.delete_multiple(rand_objs)
                 continue
+
+            for obj in rand_objs:
+                obj.hide()
 
             
             camera_rot = bproc.camera.rotation_from_forward_vec(poi-cam_loc)
@@ -507,12 +517,15 @@ class Scene:
 
             self.output_file(data, "canonical", i, 0)
 
+            for obj in rand_objs:
+                obj.hide(False)
+
             for j in range(self.r_params.no_randomisations):
 
                 bproc.utility.reset_keyframes()
 
                 # randomise environment
-                light = self.randomise_env(ceiling, box, poi)
+                light = self.randomise_env(ceiling, box, poi, rand_objs)
 
                 # Render the randomised scene
                 bproc.camera.add_camera_pose(cam_pose)
@@ -535,9 +548,9 @@ class Scene:
 
 # apriltag
 
-if __name__ == "__main__":
-    canonical_params = CanonicalParams()
-    randomisation_params = RandomisationParams()
+# if __name__ == "__main__":
+#     canonical_params = CanonicalParams()
+#     randomisation_params = RandomisationParams()
 
-    scene = Scene(canonical_params, randomisation_params, "/vol/bitbucket/efb4518/fyp/fyp/generated_imgs_distractors")
-    scene.render_scene(no_images=20)
+#     scene = Scene(canonical_params, randomisation_params, "/vol/bitbucket/efb4518/fyp/fyp/generated_imgs_distractors")
+#     scene.render_scene(no_images=20)
