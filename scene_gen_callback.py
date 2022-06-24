@@ -1,21 +1,21 @@
 import blenderproc as bproc
 from tensorflow import keras
-from scene_generator import Scene, CanonicalParams, RandomisationParams
+from scene_generator import Scene #, CanonicalParams, RandomisationParams
 import numpy as np
 from PIL import Image
 from glob import glob
 
 class SceneGenCallback(keras.callbacks.Callback):
-    def __init__(self, sample_interval):
+    def __init__(self, sample_interval, c_params, r_params):
         super(SceneGenCallback, self).__init__()
         self.epoch = 0
         self.sample_interval = sample_interval
-        canonical_params = CanonicalParams()
-        randomisation_params = RandomisationParams()
+        self.canonical_params = c_params
+        self.randomisation_params = r_params
         self.output_folder = "/vol/bitbucket/efb4518/fyp/fyp/img_to_label_test"
-        self.img_res = (canonical_params.img_width, canonical_params.img_height)
+        self.img_res = (self.canonical_params.img_width, self.canonical_params.img_height)
 
-        self.scene = Scene(canonical_params, randomisation_params, self.output_folder)
+        self.scene = Scene(self.canonical_params, self.randomisation_params, self.output_folder)
 
         self.blue_mat = None
         self.orange_mat = None
