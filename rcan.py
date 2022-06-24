@@ -26,7 +26,7 @@ print("Num GPUs Available: ", len(config.list_physical_devices('GPU')))
 class RCAN:
 
     def __init__(self, config, data_loader):
-        self.dataset_name = "/vol/bitbucket/efb4518/fyp/fyp/generated_imgs_numpy"
+        self.dataset_name = config.dataset_name
         self.output_loc = config.output_folder
         self.kernel_size = config.kernel_size
         self.filters = config.filters
@@ -56,7 +56,7 @@ class RCAN:
         self.sample_interval = config.sample_interval
         self.model_save_interval = 1
 
-        self.opt_G = optimizers.Adam(learning_rate=config.learning_rate, beta_1=0.5)  # OPTIMISER??
+        self.opt_G = optimizers.Adam(learning_rate=config.learning_rate, beta_1=0.5)
         self.opt_D = optimizers.Adam(learning_rate=config.learning_rate, beta_1=0.5)
         self.data_loader = data_loader
 
@@ -120,7 +120,7 @@ class RCAN:
         u4 = self.deconv2d_layer(u3, skip_input=d4, filters1=self.filters * 32, filters2=self.filters * 8)
         u5 = self.deconv2d_layer(u4, skip_input=d3, filters1=self.filters * 16, filters2=self.filters * 4)
 
-        u8 = self.deconv2d_layer(u5, skip_input=d2, filters1=self.filters * 4, filters2=self.filters *2) #, strides2=2)
+        u8 = self.deconv2d_layer(u5, skip_input=d2, filters1=self.filters * 4, filters2=self.filters *2)
         u9 = Conv2D(filters=self.filters, kernel_size=3, strides=1, padding='same', activation='relu', kernel_initializer=self.initialiser)(u8)
         u10 = InstanceNormalization()(u9)
 
@@ -249,6 +249,7 @@ class RCAN:
 
         start_time = datetime.datetime.now()
 
+        # discriminator loss is calculated at different scales
         valid_patch_outputs = [np.ones((self.batch_size,) + (disc_patch, disc_patch, 1)) for disc_patch in
                                self.patch_sizes]
         fake_patch_outputs = [np.zeros((self.batch_size,) + (disc_patch, disc_patch, 1)) for disc_patch in
@@ -257,6 +258,7 @@ class RCAN:
         for epoch in range(self.epochs):
             for batch_i, (target_img, randomised_img, target_depth, target_segmap, target_keypoints, distance) in enumerate(self.data_loader.load_batch(self.batch_size)):
 
+                # train discriminator network
                 fake_imgs = self.g.predict(randomised_img)
 
                 d_loss_real = self.d.train_on_batch([target_img, randomised_img], valid_patch_outputs)
@@ -264,6 +266,7 @@ class RCAN:
 
                 d_loss = 0.5 * np.add(d_loss_real, d_loss_fake)
 
+                # train generator network
                 gan_outputs = {'valids_0':valid_patch_outputs[0], 'valids_1':valid_patch_outputs[1], 'valids_2':valid_patch_outputs[2], 'fake_rgb':target_img}
 
                 if self.use_seg:
@@ -309,9 +312,11 @@ class RCAN:
                     sample_imgs_config['target_keypoints'] = target_keypoints[:3]
                     sample_imgs_config['fake_keypoints'] = fake_imgs['fake_keypoints'][:3]
 
-
+                # output example generated image
                 if batch_i % self.sample_interval == 0:
                     self.sample_images(**sample_imgs_config)
+
+                # save current model to file
                 if epoch % self.model_save_interval == 0 and batch_i == 0:
                     self.g.save("%s/models/model%d_%d" % (self.output_loc, epoch, batch_i))
 
@@ -345,11 +350,8 @@ class RCAN:
         titles = ['Condition', 'Generated', 'Original']
         fig, axs = plt.subplots(r, c)
         gen_cnt = 0
-        seg_cnt = 0
-        depth_cnt = 0
 
         for i in range(r):
-            # for j in range(c):
             axs[i, 0].imshow(gen_imgs[gen_cnt])
             axs[i, 0].set_title(titles[i])
             axs[i, 0].axis('off')
@@ -366,29 +368,6 @@ class RCAN:
             gen_cnt += 1
 
             # gen_cnt += 3
-
-            # if self.use_seg:
-            #     axs[i, 1].imshow(seg_imgs[seg_cnt])
-            #     seg_cnt += 1
-            # # else:
-            # #     axs[i, 1].imshow(gen_imgs[gen_cnt])
-            # #     gen_cnt += 1
-            # axs[i, 1].set_title(titles[i])
-            # axs[i, 1].axis('off')
-
-            # if self.use_depth:
-            #     axs[i, 2].imshow(depth_imgs[depth_cnt])
-            #     depth_cnt += 1
-            # # else:
-            # #     axs[i, 2].imshow(gen_imgs[gen_cnt])
-            # #     gen_cnt += 1
-            # axs[i, 2].set_title(titles[i])
-            # axs[i, 2].axis('off')
-
-            # axs[i, 3].imshow(gen_imgs[cnt])
-            # axs[i, 3].set_title(titles[i])
-            # axs[i, 3].axis('off')
-            # cnt += 1
 
         fig.savefig("%s/%d_%d.png" % (self.output_loc, epoch, batch_i))
         plt.show()

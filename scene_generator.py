@@ -26,6 +26,7 @@ class Scene:
         self.save_arrs_interval = config.sample_interval
         self.rand_objs_to_gen = config.rand_objs_to_gen
 
+    # create an object, either loaded from file or from Blender primitive
     def load_obj(self, obj_name, pos, rot, from_file=False):
         if from_file:
             obj = bproc.loader.load_obj(obj_name)[0]
@@ -36,12 +37,14 @@ class Scene:
 
         return obj, bproc.object.compute_poi([obj])
 
+    # create a spotlight with given location and energy
     def set_spot_light(self, loc, energy):
         light = bproc.types.Light()
         light.set_location(loc)
         light.set_energy(energy)
         return light
 
+    # return rotation matrix of camera location + orientation with optional random perturbation
     def set_camera(self, loc, poi, randomise=False):
         # Set the camera to be in front of the object
         rotation_matrix = bproc.camera.rotation_from_forward_vec(poi - loc, inplane_rot=0)
@@ -54,13 +57,13 @@ class Scene:
         cam_pose = bproc.math.build_transformation_mat(loc, rotation_matrix)
         return cam_pose, rotation_matrix
 
-
-    def generate_data(self, end,start,start_orient, end_orient):
+    # get distance, rotation and euler angles of an object
+    def generate_data(self, end, start,start_orient, end_orient):
         distance=  end-start
-        print(start_orient)
         rotation_matrix = np.matmul(np.linalg.inv(start_orient), end_orient)
         return distance,rotation_matrix, self.rot2eul(rotation_matrix)
 
+    # output scene data to file
     def output_file(self, data, folder, i, j):
         arr_colours = np.array(data.get("colors")[0]).reshape((self.c_params.img_width, self.c_params.img_height, 3))
         im = Image.fromarray(arr_colours)
@@ -73,12 +76,12 @@ class Scene:
             arr_depth = np.array(data.get("depth")).reshape((self.c_params.img_width, self.c_params.img_height))
             np.save("%s/depth/depth_%d.npy" % (self.output_folder, i), arr_depth)
 
-
         if data.__contains__("instance_segmaps"):
             arr_seg = np.array(data.get("instance_segmaps"), dtype=np.float64).reshape(
                 (self.c_params.img_width, self.c_params.img_height))
             np.save("%s/segmap/segmap_%d.npy" % (self.output_folder, i), arr_seg)
 
+    # randomly sample a point from shell area around centre point
     def generate_pos_distance_from_point(self, center, radmin, radmax, azmax_angle):
         elevation_min = 10
         azimuth_min = -180
@@ -86,6 +89,7 @@ class Scene:
         return bproc.sampler.shell(center, radius_min=radmin, radius_max=radmax, elevation_min=elevation_min,
                                    azimuth_min=azimuth_min, azimuth_max=azimuth_max)
 
+    # generate camera orientation such that given object is visible
     def generate_pos_bb_visible(self, center, radmin, radmax, azmax_angle, bb, obj, max_samples=40, randomise=True):
         point = self.generate_pos_distance_from_point(center, radmin, radmax, azmax_angle)
         cam_pose, rotation = self.set_camera(point, center, randomise=randomise)
@@ -94,13 +98,13 @@ class Scene:
             point = self.generate_pos_distance_from_point(center, radmin, radmax, azmax_angle)
             cam_pose, rotation = self.set_camera(point, center, randomise=randomise)
             i += 1
-
             # return non-randomised point
             if i > max_samples:
                 cam_pose, rotation = self.set_camera(point, center, randomise=False)
                 return cam_pose, False, point, rotation
         return cam_pose, True, point, rotation
 
+    # randomly select and assign a texture to an object
     def randomise_material(self, obj):
         new_mat = bproc.material.create("material")
         texture = None
@@ -117,6 +121,7 @@ class Scene:
             obj.clear_materials()
             obj.add_material(new_mat)
 
+    # get centres of each face for visibility check
     def get_face_centres(self, obj):
         face_centres = []
         centre = obj.get_location()
@@ -128,6 +133,7 @@ class Scene:
                 face_centres.append(face_centre)
         return face_centres
 
+    # check if object is in view of the camera
     def check_if_bb_in_view(self, obj, cam_pose):
         points_list = []
 
@@ -148,6 +154,7 @@ class Scene:
         bproc.object.delete_multiple(points_list)
         return len(objs_vis) >= 3
 
+    # generate basic scene
     def generate_environment(self):
         box, _ = self.load_obj("blender_objects/box_tall2.obj", [0, 0, 0], [np.pi / 2, 0, 0], True)
         box.add_uv_mapping("cube", overwrite=True)
@@ -161,8 +168,8 @@ class Scene:
 
         return ceiling, box
 
+    # add randomisations to environment
     def randomise_env(self, ceiling, box, poi, rand_objs):
-        # randomise scene
         bproc.lighting.light_surface([ceiling], emission_strength=np.random.uniform(self.r_params.min_ambient_light,
                                                                                     self.r_params.max_ambient_light))
 
@@ -176,12 +183,14 @@ class Scene:
         
         return light
 
+    # convert rotation matrix to euler angles
     def rot2eul(self, R):
         beta = -np.arcsin(R[2,0])
         alpha = np.arctan2(R[2,1]/np.cos(beta),R[2,2]/np.cos(beta))
         gamma = np.arctan2(R[1,0]/np.cos(beta),R[0,0]/np.cos(beta))
         return np.array((alpha, beta, gamma))
 
+    # get keypoints of object from bounding box
     def get_keypoints(self, cam_loc, cam_rot, bb):
         keypoints = np.empty((len(bb), 3))
         for i, point in enumerate(bb):
@@ -189,6 +198,7 @@ class Scene:
             keypoints[i] = distance
         return keypoints
 
+    # add random distractor objects
     def add_random_object(self, curr_objs, obj_widths):
         random_objects = ["CUBE", "CYLINDER", "CONE", "SPHERE"]
         obj = bproc.object.create_primitive(np.random.choice(random_objects))
@@ -203,8 +213,6 @@ class Scene:
             colliding=False
             for i in range(len(curr_objs)):
                 m_dist = abs(random_loc[0]-curr_objs[i][0]) + abs(random_loc[1]-curr_objs[i][1])
-                print("i: ", i)
-                print("distance: ", m_dist, obj_widths[i], scale)
                 if m_dist < obj_widths[i]*2+scale*2:
                     colliding=True
                     break
@@ -217,6 +225,7 @@ class Scene:
         
         return obj, random_loc, scale
 
+    # generate basic scene with canonical textures
     def setup_scene(self, blue_mat = None, orange_mat = None, green_mat=None):
         # load canonical scene
         cube, poi = self.load_obj("CUBE", [0, 0, 0.1], [0, 0, 0])
@@ -225,8 +234,6 @@ class Scene:
         cube.clear_materials()
 
         self.face_centres = self.get_face_centres(cube)
-
-        print("CUBE BB: ", cube.get_bound_box())
 
         ceiling, box = self.generate_environment()
 
@@ -248,6 +255,7 @@ class Scene:
 
         return cube, poi, ceiling, box, blue_mat, orange_mat, green_mat
 
+    # generate and render scenes
     def render_scene(self, no_images):
         bproc.renderer.enable_depth_output(activate_antialiasing=True)
         bproc.camera.set_intrinsics_from_blender_params(image_height=self.c_params.img_height,

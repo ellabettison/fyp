@@ -62,7 +62,7 @@ class ImageToLabel:
         self.cnn = self.define_cnn()
         self.dataset_name = config.dataset_name
 
-        self.g_model = None
+        # use 80% of datset for training, 20% for testing
         self.data_loader = DataLoader(config=config, end=config.dataset_size*0.8)
         self.test_data_loader = DataLoader(config=config, start=config.dataset_size*0.8)
 
@@ -72,8 +72,6 @@ class ImageToLabel:
         
         self.graph_name = config.graph_name
         self.results_folder=config.results_folder
-
-        
 
     def conv2d_layer(self, layer_inp, filters, stride=1):
         c = Conv2D(filters, kernel_size=self.kernel_size, strides=stride, kernel_initializer=self.initialiser)(layer_inp)
@@ -85,7 +83,7 @@ class ImageToLabel:
     def define_cnn(self):
         inputs = {}
         
-        
+        # 
         if self.channels > 0:
             inp = Input(shape=self.input_shape)
             
@@ -118,8 +116,7 @@ class ImageToLabel:
         c = Dense(self.filters*2**4, activation='relu', kernel_initializer=self.initialiser)(c)
         c = Dense(3, activation='tanh', kernel_initializer=self.initialiser)(c) * 2
 
-       
-
+        # two inputs: rgb images concatenated by channels, vector inputs
         if self.use_vector:
             inputs['vector'] = v_inp
         if self.channels > 0:
@@ -133,6 +130,7 @@ class ImageToLabel:
 
         return model
 
+    # reset network to train network from scratch
     def reinitialize(self, model):
         for l in model.layers:
             if hasattr(l,"kernel_initializer"):
@@ -156,11 +154,10 @@ class ImageToLabel:
 
         early_stopping_callback = EarlyStopping(monitor='val_loss', patience=4, restore_best_weights=True)
         
-
         best_performance=1
         
         for i in range(self.repetitions):
-
+            # only save best network
             model_checkpoint_callback = ModelCheckpoint(
                 filepath=("%s/models/%s_model" % (self.results_folder, self.graph_name)),
                 monitor="val_loss",
@@ -201,7 +198,6 @@ class ImageToLabel:
         plt.cla()
         plt.clf()
         plt.close()
-
 
         plt.plot(np.median(losses, axis=0))
         plt.plot(np.median(val_losses, axis=0))
