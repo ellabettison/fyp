@@ -1,23 +1,15 @@
 import blenderproc as bproc
 
-import sys
-
-sys.path.append('/vol/bitbucket/efb4518/fyp/fyp')
-
 import argparse
 from scene_generator import Scene
 
-# functions_dict = {
-#     "gan": run_gan,
-#     "pose": run_image_to_label
-# }
 
 class CanonicalParams:
     def __init__(self):
         self.ambient_light = 5  # 1000
         self.camera_distance = 2
-        self.img_width = 128
-        self.img_height = 128
+        self.img_width = 256
+        self.img_height = 256
 
 
 class RandomisationParams:
@@ -41,8 +33,8 @@ class Main:
         parser = argparse.ArgumentParser(description="Just an example",
                                  formatter_class=argparse.ArgumentDefaultsHelpFormatter)
 
-        parser.add_argument("-i", "--img_size", default=128, type=int, help="Shape of image to process")
-        parser.add_argument("-o", "--output_folder", default="/vol/bitbucket/efb4518/fyp/fyp/generated_imgs_distractors", type=str, help="Folder in which to store examples of generated data")
+        parser.add_argument("-i", "--img_size", default=256, type=int, help="Shape of image to process")
+        parser.add_argument("-o", "--output_folder", default="/vol/bitbucket/efb4518/fyp/fyp/generated_imgs_distractors_vis", type=str, help="Folder in which to store examples of generated data")
         parser.add_argument("-p", "--sample_interval", default=10, type=int)
         parser.add_argument("-n", "--dataset_size", default=4500, type=int, help="How much of dataset to use for training")
         parser.add_argument("-r", "--randomisations", default=5, type=int, help="Number of randomisations to generate")
@@ -50,11 +42,11 @@ class Main:
         parser.add_argument("-q", "--use_depth", action="store_true")
         parser.add_argument("-v", "--use_vector", action="store_true")
         parser.add_argument("-c", "--use_canon", action="store_true")
-        parser.add_argument("-m", "--no_images", default=10000, type=int, help="Number of images to generate")
+        parser.add_argument("-m", "--no_images", default=100, type=int, help="Number of images to generate")
         parser.add_argument("-g", "--rand_objs_to_gen", default=10, type=int, help="Number of random objects to add to scene")
+        parser.add_argument("-t", "--start_img", default=0, type=int)
 
         args = parser.parse_args()
-        # config = vars(args)
         return args
 
     def gen_scenes(self, config):
